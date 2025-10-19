@@ -54,3 +54,4 @@ custom:
   prune:
     automatic: true
     number: 3
+    
