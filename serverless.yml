@@ -1,0 +1,56 @@
+service: payroll-backend
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ap-south-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 1024
+  timeout: 30
+  environment:
+    STAGE: ${self:provider.stage}
+    DATABASE_URL: ${env:DATABASE_URL}
+    REDIS_URL: ${env:REDIS_URL}
+    JWT_SECRET: ${env:JWT_SECRET}
+
+functions:
+  # Auth
+  sendOtp:
+    handler: src/handlers/auth/sendOtp.handler
+    events:
+      - httpApi:
+          path: /api/v1/auth/send-otp
+          method: post
+
+  verifyOtp:
+    handler: src/handlers/auth/verifyOtp.handler
+    events:
+      - httpApi:
+          path: /api/v1/auth/verify-otp
+          method: post
+
+  # Employees
+  listEmployees:
+    handler: src/handlers/employees/list.handler
+    events:
+      - httpApi:
+          path: /api/v1/employees
+          method: get
+
+plugins:
+  - serverless-esbuild
+  - serverless-offline
+  - serverless-prune-plugin
+
+custom:
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+    target: 'node20'
+    platform: 'node'
+  prune:
+    automatic: true
+    number: 3
