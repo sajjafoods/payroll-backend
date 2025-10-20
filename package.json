@@ -15,12 +15,23 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "openapi:generate": "ts-node scripts/generate-openapi.ts",
-    "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push",
-    "db:pull": "drizzle-kit introspect",
-    "db:studio": "drizzle-kit studio",
-    "db:drop": "drizzle-kit drop",
-    "db:migrate": "node -r dotenv/config src/db/migrate.ts"
+    
+    "db:migrate": "flyway migrate",
+    "db:info": "flyway info",
+    "db:validate": "flyway validate",
+    "db:clean": "flyway clean",
+    "db:repair": "flyway repair",
+    
+    "schema:pull": "drizzle-kit pull",
+    "schema:generate": "drizzle-kit generate",
+    "schema:push": "drizzle-kit push",
+    "schema:studio": "drizzle-kit studio",
+    "schema:check": "drizzle-kit check",
+    
+    "schema:sync": "npm run db:migrate && npm run schema:pull",
+    "schema:validate": "node scripts/validate-schema.js",
+    
+    "prepare": "husky install"
   },
   "repository": {
     "type": "git",

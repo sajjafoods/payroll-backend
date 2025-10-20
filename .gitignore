@@ -67,3 +67,8 @@ prisma/migrations/**/applied_steps.json
 # Package manager
 .yarn/
 .pnpm-store/
+
+flyway.conf
+
+# Drizzle generated metadata (regenerated from DB)
+src/db/schema/meta/

@@ -4,12 +4,15 @@ import * as dotenv from 'dotenv';
 // Load environment variables from .env.local
 dotenv.config({ path: '.env.local' });
 
+
 export default defineConfig({
-  schema: './src/db/schema/index.ts',
-  out: './drizzle',
+  out: './src/db/schema',  // All generated files go inside src
   dialect: 'postgresql',
   dbCredentials: {
     url: process.env.DATABASE_URL!,
+  },
+  introspect: {
+    casing: 'camel', // Convert snake_case to camelCase
   },
   verbose: true,
   strict: true,

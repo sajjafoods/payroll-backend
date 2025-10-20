@@ -169,6 +169,8 @@ ALTER TABLE organization_settings ENABLE ROW LEVEL SECURITY;
 -- Policy: Allow users to see organizations they are members of
 -- Note: This policy references organization_users table (will be created in Users module)
 -- Policy will be activated after organization_users table is created
+-- COMMENTED OUT: Will be added in a later migration after organization_users table exists
+/*
 CREATE POLICY org_member_access ON organizations
     FOR ALL
     USING (
@@ -193,6 +195,7 @@ CREATE POLICY org_settings_member_access ON organization_settings
         OR 
         current_setting('app.bypass_rls', true) = 'true'  -- Allow service account access
     );
+*/
 
 -- =====================================================
 -- COMMENTS (Schema Documentation)
