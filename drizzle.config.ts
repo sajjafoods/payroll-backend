@@ -14,6 +14,7 @@ export default defineConfig({
   introspect: {
     casing: 'camel', // Convert snake_case to camelCase
   },
+  tablesFilter: ['!_prisma_migrations', '!flyway_schema_history'], // Exclude migration tracking tables
   verbose: true,
   strict: true,
 });

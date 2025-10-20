@@ -1,33 +1,14 @@
 import { pgTable, varchar, timestamp, text, integer, index, boolean, check, uuid, foreignKey, numeric } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
+// NOTE: The following database elements are not captured by Drizzle introspection:
+// 1. Database triggers: update_organizations_updated_at and update_organization_settings_updated_at
+//    - These triggers automatically update the updated_at column on UPDATE operations
+//    - Application code should NOT manually set updated_at fields
+// 2. Database function: update_updated_at_column() used by the triggers
+// 3. Row-Level Security (RLS): Enabled on organizations and organization_settings tables
+// 4. Table/column comments: Extensive documentation exists in the migration SQL files
 
-
-export const prismaMigrations = pgTable("_prisma_migrations", {
-	id: varchar({ length: 36 }).primaryKey().notNull(),
-	checksum: varchar({ length: 64 }).notNull(),
-	finishedAt: timestamp("finished_at", { withTimezone: true, mode: 'string' }),
-	migrationName: varchar("migration_name", { length: 255 }).notNull(),
-	logs: text(),
-	rolledBackAt: timestamp("rolled_back_at", { withTimezone: true, mode: 'string' }),
-	startedAt: timestamp("started_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	appliedStepsCount: integer("applied_steps_count").default(0).notNull(),
-});
-
-export const flywaySchemaHistory = pgTable("flyway_schema_history", {
-	installedRank: integer("installed_rank").primaryKey().notNull(),
-	version: varchar({ length: 50 }),
-	description: varchar({ length: 200 }).notNull(),
-	type: varchar({ length: 20 }).notNull(),
-	script: varchar({ length: 1000 }).notNull(),
-	checksum: integer(),
-	installedBy: varchar("installed_by", { length: 100 }).notNull(),
-	installedOn: timestamp("installed_on", { mode: 'string' }).defaultNow().notNull(),
-	executionTime: integer("execution_time").notNull(),
-	success: boolean().notNull(),
-}, (table) => [
-	index("flyway_schema_history_s_idx").using("btree", table.success.asc().nullsLast().op("bool_ops")),
-]);
 
 export const organizations = pgTable("organizations", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
