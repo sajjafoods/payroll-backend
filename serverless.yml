@@ -1,6 +1,6 @@
 service: payroll-backend
 
-frameworkVersion: '3'
+frameworkVersion: '4'
 
 provider:
   name: aws
@@ -39,19 +39,19 @@ functions:
           path: /api/v1/employees
           method: get
 
-plugins:
-  - serverless-esbuild
-  - serverless-offline
-  - serverless-prune-plugin
-
-custom:
+build:
   esbuild:
     bundle: true
     minify: false
     sourcemap: true
-    target: 'node20'
-    platform: 'node'
+    target: node20
+    platform: node
+
+plugins:
+  - serverless-offline
+  - serverless-prune-plugin
+
+custom:
   prune:
     automatic: true
     number: 3
-    

@@ -522,6 +522,329 @@ npm run dev
 # Backend should now be running on http://localhost:3000
 ```
 
+## 11. Testing APIs Locally
+
+Once your backend is running, you can test the APIs using various tools:
+
+### Option 1: cURL (Command Line)
+
+**Test health endpoint:**
+```bash
+curl http://localhost:3000/health
+```
+
+**Test POST request (Send OTP):**
+```bash
+curl -X POST http://localhost:3000/api/v1/auth/send-otp \
+  -H "Content-Type: application/json" \
+  -d '{"phone_number": "+919876543210"}'
+```
+
+**Test GET request (List Employees):**
+```bash
+curl http://localhost:3000/api/v1/employees \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Test with pretty JSON output:**
+```bash
+curl http://localhost:3000/api/v1/employees | json_pp
+# or use jq for better formatting
+curl http://localhost:3000/api/v1/employees | jq
+```
+
+### Option 2: HTTPie (Recommended - More User-Friendly)
+
+**Install HTTPie:**
+```bash
+# macOS
+brew install httpie
+
+# Ubuntu/Debian
+sudo apt install httpie
+
+# Windows (via pip)
+pip install httpie
+```
+
+**Test APIs:**
+```bash
+# GET request
+http GET http://localhost:3000/api/v1/employees
+
+# POST request with JSON
+http POST http://localhost:3000/api/v1/auth/send-otp \
+  phone_number="+919876543210"
+
+# With authentication header
+http GET http://localhost:3000/api/v1/employees \
+  Authorization:"Bearer YOUR_JWT_TOKEN"
+
+# With custom headers
+http POST http://localhost:3000/api/v1/employees \
+  Authorization:"Bearer YOUR_JWT_TOKEN" \
+  name="John Doe" \
+  phone_number="+919876543210" \
+  role="worker"
+```
+
+### Option 3: Postman (GUI - Most Popular)
+
+**Setup:**
+1. Download Postman from https://www.postman.com/downloads/
+2. Create a new Collection called "Payroll API"
+3. Set base URL as environment variable: `http://localhost:3000`
+
+**Create requests:**
+
+**1. Send OTP:**
+- Method: `POST`
+- URL: `{{base_url}}/api/v1/auth/send-otp`
+- Headers: `Content-Type: application/json`
+- Body (raw JSON):
+  ```json
+  {
+    "phone_number": "+919876543210"
+  }
+  ```
+
+**2. Verify OTP:**
+- Method: `POST`
+- URL: `{{base_url}}/api/v1/auth/verify-otp`
+- Body:
+  ```json
+  {
+    "phone_number": "+919876543210",
+    "otp": "123456"
+  }
+  ```
+
+**3. List Employees (with auth):**
+- Method: `GET`
+- URL: `{{base_url}}/api/v1/employees`
+- Headers: `Authorization: Bearer {{access_token}}`
+
+**Pro Tips for Postman:**
+- Use Environment Variables for `base_url` and `access_token`
+- Create Tests tab to auto-save tokens from responses
+- Use Pre-request Scripts for dynamic data
+- Export collection to share with team
+
+### Option 4: Insomnia (GUI - Lightweight Alternative)
+
+**Setup:**
+1. Download from https://insomnia.rest/download
+2. Create new Request Collection
+3. Similar workflow to Postman
+
+**Features:**
+- GraphQL support (for future)
+- Environment management
+- Code snippet generation
+- Dark mode by default
+
+### Option 5: VS Code REST Client Extension
+
+**Install:**
+1. Install "REST Client" extension in VS Code
+2. Create a file: `api-tests.http`
+
+**Create test file:**
+```bash
+cat > api-tests.http << 'EOF'
+### Variables
+@baseUrl = http://localhost:3000
+@token = your-jwt-token-here
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Send OTP
+POST {{baseUrl}}/api/v1/auth/send-otp
+Content-Type: application/json
+
+{
+  "phone_number": "+919876543210"
+}
+
+### Verify OTP
+POST {{baseUrl}}/api/v1/auth/verify-otp
+Content-Type: application/json
+
+{
+  "phone_number": "+919876543210",
+  "otp": "123456"
+}
+
+### List Employees
+GET {{baseUrl}}/api/v1/employees
+Authorization: Bearer {{token}}
+
+### Create Employee
+POST {{baseUrl}}/api/v1/employees
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "John Doe",
+  "phone_number": "+919876543210",
+  "role": "worker",
+  "daily_wage": 500
+}
+EOF
+```
+
+**Usage:**
+- Click "Send Request" link above each request
+- Results appear in split pane
+- Save responses for later reference
+
+### Option 6: Hoppscotch (Web-based, Open Source)
+
+**Access online:** https://hoppscotch.io/
+
+**Features:**
+- No installation required
+- Works in browser
+- Real-time collaboration
+- WebSocket testing
+- GraphQL support
+
+**Usage:**
+1. Open https://hoppscotch.io
+2. Enter your API endpoints
+3. Test directly in browser
+
+### Option 7: Bruno (New, File-based Alternative)
+
+**Install:**
+```bash
+# macOS
+brew install bruno
+
+# Or download from https://www.usebruno.com/
+```
+
+**Features:**
+- Git-friendly (stores collections as files)
+- No cloud sync required
+- Lightweight and fast
+- Open source
+
+### Automated Testing with Jest
+
+**Create test file:**
+```bash
+mkdir -p tests/integration
+cat > tests/integration/auth.test.ts << 'EOF'
+import axios from 'axios';
+
+const API_URL = 'http://localhost:3000';
+
+describe('Auth API', () => {
+  it('should send OTP', async () => {
+    const response = await axios.post(`${API_URL}/api/v1/auth/send-otp`, {
+      phone_number: '+919876543210'
+    });
+    
+    expect(response.status).toBe(200);
+    expect(response.data).toHaveProperty('message');
+  });
+
+  it('should verify OTP', async () => {
+    // First send OTP
+    await axios.post(`${API_URL}/api/v1/auth/send-otp`, {
+      phone_number: '+919876543210'
+    });
+
+    // Then verify (use test OTP in dev environment)
+    const response = await axios.post(`${API_URL}/api/v1/auth/verify-otp`, {
+      phone_number: '+919876543210',
+      otp: '123456'
+    });
+    
+    expect(response.status).toBe(200);
+    expect(response.data).toHaveProperty('access_token');
+  });
+});
+EOF
+```
+
+**Run tests:**
+```bash
+npm test -- auth.test.ts
+```
+
+### Comparison Table
+
+| Tool | Type | Best For | Pros | Cons |
+|------|------|----------|------|------|
+| **cURL** | CLI | Quick tests, scripts | Everywhere, scriptable | Verbose syntax |
+| **HTTPie** | CLI | CLI lovers | Beautiful output, easy syntax | Requires installation |
+| **Postman** | GUI | Teams, complex workflows | Feature-rich, popular | Heavy, cloud sync |
+| **Insomnia** | GUI | Individual devs | Lightweight, clean UI | Fewer features |
+| **VS Code REST Client** | IDE | Developers in VS Code | Git-friendly, no context switch | VS Code only |
+| **Hoppscotch** | Web | No installation, quick tests | Browser-based, free | Requires internet |
+| **Bruno** | GUI | Git-based teams | File-based, Git-friendly | New, fewer features |
+
+### Recommended Workflow
+
+**For Quick Testing:**
+```bash
+# Use HTTPie or cURL
+http POST :3000/api/v1/auth/send-otp phone_number="+919876543210"
+```
+
+**For Development:**
+- Use **VS Code REST Client** or **Postman**
+- Keep test files in version control
+- Share collections with team
+
+**For Automated Testing:**
+- Write **Jest** integration tests
+- Run in CI/CD pipeline
+- Test all critical paths
+
+### Debugging API Responses
+
+**Check serverless-offline logs:**
+```bash
+# Backend terminal shows detailed logs
+npm run dev
+
+# You'll see:
+# - Request method and path
+# - Request headers and body
+# - Response status and body
+# - Errors with stack traces
+```
+
+**Enable verbose logging:**
+```bash
+# Add to serverless.yml for more detailed logs
+custom:
+  serverless-offline:
+    httpPort: 3000
+    websocketPort: 3001
+    lambdaPort: 3002
+    printOutput: true
+```
+
+**Use logging in handlers:**
+```typescript
+// src/handlers/employees/list.ts
+export const handler = async (event: APIGatewayProxyEvent) => {
+  console.log('Event:', JSON.stringify(event, null, 2));
+  console.log('Headers:', event.headers);
+  console.log('Query params:', event.queryStringParameters);
+  
+  // Your handler code
+  
+  console.log('Response:', response);
+  return response;
+};
+```
+
 ## Common Commands Reference
 
 ```bash
@@ -547,6 +870,11 @@ docker-compose up -d             # Start databases
 docker-compose down              # Stop databases
 docker-compose logs -f postgres  # View PostgreSQL logs
 docker-compose logs -f redis     # View Redis logs
+
+# API Testing
+http GET :3000/api/v1/employees                    # HTTPie
+curl http://localhost:3000/api/v1/employees        # cURL
+# Or use Postman, Insomnia, VS Code REST Client
 ```
 
 ## Troubleshooting

@@ -9,7 +9,7 @@
     "prisma:generate": "dotenv -e .env.local -- prisma generate",
     "prisma:studio": "dotenv -e .env.local -- prisma studio",
     "prisma:deploy": "dotenv -e .env.local -- prisma migrate deploy",
-    "dev": "serverless offline start",
+    "dev": "dotenv -e .env.local -- serverless offline start",
     "build": "tsc",
     "deploy": "serverless deploy",
     "deploy:dev": "serverless deploy --stage dev",
