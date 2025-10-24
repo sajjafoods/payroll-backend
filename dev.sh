@@ -7,12 +7,13 @@ set -e  # Exit on any error
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 {start|stop|restart}"
+    echo "Usage: $0 {start|stop|restart|test}"
     echo ""
     echo "Commands:"
     echo "  start    - Clean, build, and start the development environment"
     echo "  stop     - Stop all services and clean up"
     echo "  restart  - Stop and then start the development environment"
+    echo "  test     - Run unit tests"
     exit 1
 }
 
@@ -188,6 +189,71 @@ stop_environment() {
     echo "======================================"
 }
 
+# Function to run unit tests
+run_tests() {
+    echo "======================================"
+    echo "Payroll Backend - Running Unit Tests"
+    echo "======================================"
+    echo ""
+
+    # Change to the payroll-backend directory
+    cd "$(dirname "$0")"
+
+    # Step 1: Check and start Docker services (tests need postgres and redis)
+    echo "🐳 Checking Docker..."
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker is not running. Please start Docker Desktop and try again."
+        exit 1
+    fi
+    echo "✅ Docker is running"
+    echo ""
+
+    echo "🐳 Starting Docker Compose services..."
+    docker-compose -f docker-compose.yml up -d postgres redis
+    echo "⏳ Waiting for services to be ready..."
+    sleep 5
+
+    # Wait for PostgreSQL to be ready
+    echo "⏳ Waiting for PostgreSQL..."
+    until docker exec payroll-postgres pg_isready -U dev_user >/dev/null 2>&1; do
+        echo "   PostgreSQL is unavailable - sleeping"
+        sleep 2
+    done
+    echo "✅ PostgreSQL is ready"
+
+    # Wait for Redis to be ready
+    echo "⏳ Waiting for Redis..."
+    until docker exec payroll-redis redis-cli ping >/dev/null 2>&1; do
+        echo "   Redis is unavailable - sleeping"
+        sleep 2
+    done
+    echo "✅ Redis is ready"
+
+    # Run Flyway migrations (ensure test database is up to date)
+    echo "🔄 Running database migrations..."
+    docker-compose -f docker-compose.yml up flyway
+    echo "✅ Migrations complete"
+    echo ""
+
+    # Step 2: Run tests
+    echo "🧪 Running unit tests..."
+    echo "======================================"
+    npm test
+    TEST_EXIT_CODE=$?
+    echo ""
+    echo "======================================"
+    
+    if [ $TEST_EXIT_CODE -eq 0 ]; then
+        echo "✅ All tests passed!"
+    else
+        echo "❌ Some tests failed!"
+    fi
+    echo "======================================"
+    
+    exit $TEST_EXIT_CODE
+}
+
+# Main script logic
 # Main script logic
 case "$1" in
     start)
@@ -203,6 +269,9 @@ case "$1" in
         sleep 3
         echo ""
         start_environment
+        ;;
+    test)
+        run_tests
         ;;
     *)
         usage
