@@ -15,22 +15,18 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "openapi:generate": "ts-node scripts/generate-openapi.ts",
-    
     "db:migrate": "flyway migrate",
     "db:info": "flyway info",
     "db:validate": "flyway validate",
     "db:clean": "flyway clean",
     "db:repair": "flyway repair",
-    
     "schema:pull": "drizzle-kit pull",
     "schema:generate": "drizzle-kit generate",
     "schema:push": "drizzle-kit push",
     "schema:studio": "drizzle-kit studio",
     "schema:check": "drizzle-kit check",
-    
     "schema:sync": "npm run db:migrate && npm run schema:pull",
     "schema:validate": "node scripts/validate-schema.js",
-    
     "prepare": "husky install"
   },
   "repository": {
@@ -46,6 +42,7 @@
   },
   "homepage": "https://github.com/sajjafoods/payroll-backend#readme",
   "devDependencies": {
+    "@jest/globals": "^30.2.0",
     "@types/aws-lambda": "^8.10.156",
     "@types/bcryptjs": "^2.4.6",
     "@types/jest": "^30.0.0",
@@ -67,6 +64,7 @@
     "serverless-prune-plugin": "^2.1.0",
     "ts-jest": "^29.4.5",
     "ts-node": "^10.9.2",
+    "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   },
   "dependencies": {
