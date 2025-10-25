@@ -1,11 +1,22 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { organizations, organizationSettings } from './schema/schema';
+import { 
+  organizations, 
+  organizationSettings,
+  users,
+  organizationUsers,
+  userSessions,
+  employees,
+} from './schema/schema';
 
 // Combine all schemas
 const schema = {
   organizations,
   organizationSettings,
+  users,
+  organizationUsers,
+  userSessions,
+  employees,
 };
 
 // Lazy initialization to allow env vars to be loaded first

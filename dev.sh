@@ -17,6 +17,62 @@ usage() {
     exit 1
 }
 
+# Function to kill server processes (shared by start and stop)
+kill_server_processes() {
+    echo "🛑 Stopping server processes..."
+
+    # Kill processes using port 3002 (serverless offline lambda server)
+    PORT_3002_PIDS=$(lsof -ti:3002 2>/dev/null || true)
+    if [ -n "$PORT_3002_PIDS" ]; then
+        echo "Found process(es) using port 3002: $PORT_3002_PIDS"
+        kill $PORT_3002_PIDS 2>/dev/null || true
+        sleep 2
+        # Force kill if still running
+        kill -9 $PORT_3002_PIDS 2>/dev/null || true
+        echo "✅ Processes on port 3002 stopped"
+    else
+        echo "ℹ️  No processes using port 3002"
+    fi
+
+    # Kill processes using port 3000 (main API server)
+    PORT_3000_PIDS=$(lsof -ti:3000 2>/dev/null || true)
+    if [ -n "$PORT_3000_PIDS" ]; then
+        echo "Found process(es) using port 3000: $PORT_3000_PIDS"
+        kill $PORT_3000_PIDS 2>/dev/null || true
+        sleep 2
+        # Force kill if still running
+        kill -9 $PORT_3000_PIDS 2>/dev/null || true
+        echo "✅ Processes on port 3000 stopped"
+    else
+        echo "ℹ️  No processes using port 3000"
+    fi
+
+    # Find and kill serverless offline processes
+    SERVERLESS_PIDS=$(pgrep -f "serverless offline" 2>/dev/null || true)
+    if [ -n "$SERVERLESS_PIDS" ]; then
+        echo "Found serverless processes: $SERVERLESS_PIDS"
+        kill $SERVERLESS_PIDS 2>/dev/null || true
+        sleep 2
+        # Force kill if still running
+        kill -9 $SERVERLESS_PIDS 2>/dev/null || true
+        echo "✅ Serverless processes stopped"
+    fi
+
+    # Find and kill node processes related to this project
+    NODE_PIDS=$(pgrep -f "node.*payroll-backend" 2>/dev/null || true)
+    if [ -n "$NODE_PIDS" ]; then
+        echo "Found node processes: $NODE_PIDS"
+        kill $NODE_PIDS 2>/dev/null || true
+        sleep 2
+        # Force kill if still running
+        kill -9 $NODE_PIDS 2>/dev/null || true
+        echo "✅ Node processes stopped"
+    fi
+
+    echo "✅ All server processes cleaned up"
+    echo ""
+}
+
 # Function to start the environment
 start_environment() {
     echo "======================================"
@@ -28,35 +84,7 @@ start_environment() {
     cd "$(dirname "$0")"
 
     # Step 0: Kill any existing processes for fresh start
-    echo "🛑 Checking for existing processes..."
-
-    # Find and kill serverless offline processes
-    SERVERLESS_PIDS=$(pgrep -f "serverless offline" || true)
-    if [ -n "$SERVERLESS_PIDS" ]; then
-        echo "Found existing serverless processes: $SERVERLESS_PIDS"
-        kill $SERVERLESS_PIDS 2>/dev/null || true
-        sleep 2
-        # Force kill if still running
-        kill -9 $SERVERLESS_PIDS 2>/dev/null || true
-        echo "✅ Existing serverless processes stopped"
-    else
-        echo "ℹ️  No existing serverless processes found"
-    fi
-
-    # Find and kill node processes related to this project
-    NODE_PIDS=$(pgrep -f "node.*payroll-backend" || true)
-    if [ -n "$NODE_PIDS" ]; then
-        echo "Found existing node processes: $NODE_PIDS"
-        kill $NODE_PIDS 2>/dev/null || true
-        sleep 2
-        # Force kill if still running
-        kill -9 $NODE_PIDS 2>/dev/null || true
-        echo "✅ Existing node processes stopped"
-    else
-        echo "ℹ️  No existing node processes found"
-    fi
-
-    echo ""
+    kill_server_processes
 
     # Step 1: Check and start Docker services
     echo "🐳 Checking Docker..."
@@ -132,35 +160,7 @@ stop_environment() {
     cd "$(dirname "$0")"
 
     # Step 1: Stop running server processes
-    echo "🛑 Stopping server processes..."
-
-    # Find and kill serverless offline processes
-    SERVERLESS_PIDS=$(pgrep -f "serverless offline" || true)
-    if [ -n "$SERVERLESS_PIDS" ]; then
-        echo "Found serverless processes: $SERVERLESS_PIDS"
-        kill $SERVERLESS_PIDS 2>/dev/null || true
-        sleep 2
-        # Force kill if still running
-        kill -9 $SERVERLESS_PIDS 2>/dev/null || true
-        echo "✅ Serverless processes stopped"
-    else
-        echo "ℹ️  No serverless processes found"
-    fi
-
-    # Find and kill node processes related to this project
-    NODE_PIDS=$(pgrep -f "node.*payroll-backend" || true)
-    if [ -n "$NODE_PIDS" ]; then
-        echo "Found node processes: $NODE_PIDS"
-        kill $NODE_PIDS 2>/dev/null || true
-        sleep 2
-        # Force kill if still running
-        kill -9 $NODE_PIDS 2>/dev/null || true
-        echo "✅ Node processes stopped"
-    else
-        echo "ℹ️  No node processes found"
-    fi
-
-    echo ""
+    kill_server_processes
 
     # Step 2: Stop Docker services
     echo "🐳 Stopping Docker Compose services..."
