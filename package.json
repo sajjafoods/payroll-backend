@@ -20,7 +20,7 @@
     "db:validate": "flyway validate",
     "db:clean": "flyway clean",
     "db:repair": "flyway repair",
-    "schema:pull": "drizzle-kit pull",
+    "schema:pull": "node scripts/introspect.js",
     "schema:generate": "drizzle-kit generate",
     "schema:push": "drizzle-kit push",
     "schema:studio": "drizzle-kit studio",

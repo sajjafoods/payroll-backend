@@ -1,7 +1,141 @@
-import { pgTable, index, foreignKey, pgPolicy, check, uuid, varchar, text, boolean, timestamp, integer, numeric, unique, inet, date, jsonb, primaryKey } from "drizzle-orm/pg-core"
+import { pgTable, index, foreignKey, unique, pgPolicy, check, uuid, date, varchar, text, numeric, boolean, timestamp, integer, inet, jsonb, primaryKey } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 
+
+export const attendanceRecords = pgTable("attendance_records", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	organizationId: uuid("organization_id").notNull(),
+	employeeId: uuid("employee_id").notNull(),
+	date: date().notNull(),
+	status: varchar({ length: 20 }).notNull(),
+	notes: text(),
+	leaveDays: numeric("leave_days", { precision: 3, scale:  1 }),
+	leaveType: varchar("leave_type", { length: 20 }),
+	isPaidLeave: boolean("is_paid_leave").default(true),
+	balanceBefore: numeric("balance_before", { precision: 5, scale:  1 }),
+	balanceAfter: numeric("balance_after", { precision: 5, scale:  1 }),
+	createdByUserId: uuid("created_by_user_id"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
+	updatedByUserId: uuid("updated_by_user_id"),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+	index("idx_attendance_created_by").using("btree", table.createdByUserId.asc().nullsLast().op("uuid_ops")),
+	index("idx_attendance_employee_date").using("btree", table.employeeId.asc().nullsLast().op("date_ops"), table.date.desc().nullsFirst().op("date_ops")),
+	index("idx_attendance_leaves").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.leaveType.asc().nullsLast().op("text_ops")).where(sql`((status)::text = 'on_leave'::text)`),
+	index("idx_attendance_org_date").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.date.desc().nullsFirst().op("uuid_ops")),
+	index("idx_attendance_org_month").using("btree", sql`organization_id`, sql`EXTRACT(year FROM date)`, sql`EXTRACT(month FROM date)`),
+	index("idx_attendance_org_status").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("uuid_ops")),
+	index("idx_attendance_paid_leaves").using("btree", table.organizationId.asc().nullsLast().op("bool_ops"), table.isPaidLeave.asc().nullsLast().op("uuid_ops")).where(sql`((status)::text = 'on_leave'::text)`),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "attendance_records_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.employeeId],
+			foreignColumns: [employees.id],
+			name: "attendance_records_employee_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.createdByUserId],
+			foreignColumns: [users.id],
+			name: "attendance_records_created_by_user_id_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.updatedByUserId],
+			foreignColumns: [users.id],
+			name: "attendance_records_updated_by_user_id_fkey"
+		}).onDelete("set null"),
+	unique("unique_employee_date").on(table.employeeId, table.date),
+	pgPolicy("attendance_org_member_access", { as: "permissive", for: "all", to: ["public"], using: sql`((organization_id IN ( SELECT organization_users.organization_id
+   FROM organization_users
+  WHERE ((organization_users.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (organization_users.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
+	check("attendance_records_status_check", sql`(status)::text = ANY ((ARRAY['present'::character varying, 'absent'::character varying, 'half_day'::character varying, 'on_leave'::character varying])::text[])`),
+	check("attendance_records_leave_days_check", sql`leave_days = ANY (ARRAY[0.5, 1.0])`),
+	check("attendance_records_leave_type_check", sql`(leave_type)::text = ANY ((ARRAY['casual'::character varying, 'sick'::character varying, 'earned'::character varying, 'unpaid'::character varying, 'other'::character varying])::text[])`),
+	check("leave_fields_required", sql`(((status)::text = 'on_leave'::text) AND (leave_days IS NOT NULL) AND (leave_type IS NOT NULL)) OR (((status)::text <> 'on_leave'::text) AND (leave_days IS NULL) AND (leave_type IS NULL) AND (balance_before IS NULL) AND (balance_after IS NULL))`),
+]);
+
+export const employeeLeaveBalances = pgTable("employee_leave_balances", {
+	employeeId: uuid("employee_id").primaryKey().notNull(),
+	organizationId: uuid("organization_id").notNull(),
+	totalBalance: numeric("total_balance", { precision: 5, scale:  1 }).default('0.0').notNull(),
+	accrualType: varchar("accrual_type", { length: 20 }).default('none'),
+	accrualRate: numeric("accrual_rate", { precision: 4, scale:  1 }).default('0.0'),
+	maxBalance: numeric("max_balance", { precision: 5, scale:  1 }).default('30.0'),
+	effectiveFrom: date("effective_from"),
+	ytdLeavesTaken: numeric("ytd_leaves_taken", { precision: 5, scale:  1 }).default('0.0').notNull(),
+	ytdLeavesAccrued: numeric("ytd_leaves_accrued", { precision: 5, scale:  1 }).default('0.0').notNull(),
+	lastAccrualDate: date("last_accrual_date"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+	index("idx_leave_balance_accrual_pending").using("btree", table.lastAccrualDate.asc().nullsLast().op("date_ops"), table.accrualType.asc().nullsLast().op("date_ops")).where(sql`((accrual_type)::text = ANY ((ARRAY['monthly'::character varying, 'annual'::character varying])::text[]))`),
+	index("idx_leave_balance_accrual_type").using("btree", table.accrualType.asc().nullsLast().op("text_ops")).where(sql`((accrual_type)::text <> 'none'::text)`),
+	index("idx_leave_balance_org").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.employeeId],
+			foreignColumns: [employees.id],
+			name: "employee_leave_balances_employee_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "employee_leave_balances_organization_id_fkey"
+		}).onDelete("cascade"),
+	pgPolicy("leave_balance_org_member_access", { as: "permissive", for: "all", to: ["public"], using: sql`((organization_id IN ( SELECT organization_users.organization_id
+   FROM organization_users
+  WHERE ((organization_users.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (organization_users.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
+	check("employee_leave_balances_total_balance_check", sql`total_balance >= (0)::numeric`),
+	check("employee_leave_balances_accrual_type_check", sql`(accrual_type)::text = ANY ((ARRAY['monthly'::character varying, 'annual'::character varying, 'none'::character varying])::text[])`),
+	check("employee_leave_balances_accrual_rate_check", sql`accrual_rate >= (0)::numeric`),
+	check("employee_leave_balances_max_balance_check", sql`max_balance > (0)::numeric`),
+]);
+
+export const leaveBalanceHistory = pgTable("leave_balance_history", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	organizationId: uuid("organization_id").notNull(),
+	employeeId: uuid("employee_id").notNull(),
+	attendanceRecordId: uuid("attendance_record_id"),
+	changeType: varchar("change_type", { length: 30 }).notNull(),
+	balanceBefore: numeric("balance_before", { precision: 5, scale:  1 }).notNull(),
+	balanceChange: numeric("balance_change", { precision: 5, scale:  1 }).notNull(),
+	balanceAfter: numeric("balance_after", { precision: 5, scale:  1 }).notNull(),
+	reason: text().notNull(),
+	notes: text(),
+	changedByUserId: uuid("changed_by_user_id"),
+	changedAt: timestamp("changed_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+	index("idx_balance_history_changed_by").using("btree", table.changedByUserId.asc().nullsLast().op("uuid_ops")),
+	index("idx_balance_history_employee").using("btree", table.employeeId.asc().nullsLast().op("timestamptz_ops"), table.changedAt.desc().nullsFirst().op("timestamptz_ops")),
+	index("idx_balance_history_org").using("btree", table.organizationId.asc().nullsLast().op("timestamptz_ops"), table.changedAt.desc().nullsFirst().op("uuid_ops")),
+	index("idx_balance_history_type").using("btree", table.changeType.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "leave_balance_history_organization_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.employeeId],
+			foreignColumns: [employees.id],
+			name: "leave_balance_history_employee_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.attendanceRecordId],
+			foreignColumns: [attendanceRecords.id],
+			name: "leave_balance_history_attendance_record_id_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.changedByUserId],
+			foreignColumns: [users.id],
+			name: "leave_balance_history_changed_by_user_id_fkey"
+		}).onDelete("set null"),
+	pgPolicy("balance_history_org_member_access", { as: "permissive", for: "all", to: ["public"], using: sql`((organization_id IN ( SELECT organization_users.organization_id
+   FROM organization_users
+  WHERE ((organization_users.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (organization_users.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
+	check("leave_balance_history_change_type_check", sql`(change_type)::text = ANY ((ARRAY['leave_deduction'::character varying, 'leave_restoration'::character varying, 'accrual'::character varying, 'manual_adjustment'::character varying, 'initial_setup'::character varying, 'bonus'::character varying, 'carry_forward'::character varying])::text[])`),
+]);
 
 export const organizations = pgTable("organizations", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -151,8 +285,8 @@ export const otpSessions = pgTable("otp_sessions", {
 	index("idx_otp_expires_at").using("btree", table.expiresAt.asc().nullsLast().op("timestamptz_ops")),
 	index("idx_otp_phone_active").using("btree", table.phoneNumber.asc().nullsLast().op("text_ops"), table.isVerified.asc().nullsLast().op("text_ops")).where(sql`(is_verified = false)`),
 	pgPolicy("otp_sessions_public", { as: "permissive", for: "all", to: ["public"], using: sql`(current_setting('app.bypass_rls'::text, true) = 'true'::text)` }),
-	check("otp_phone_format_check", sql`(phone_number)::text ~ '^\+[1-9]\d{1,14}$'::text`),
 	check("otp_expiry_check", sql`expires_at > created_at`),
+	check("otp_phone_format_check", sql`(phone_number)::text ~ '^\+[1-9]\d{1,14}$'::text`),
 	check("otp_attempts_check", sql`(attempts >= 0) AND (attempts <= max_attempts)`),
 	check("otp_verified_check", sql`(verified_at IS NULL) OR ((is_verified = true) AND (verified_at <= CURRENT_TIMESTAMP))`),
 ]);
@@ -176,9 +310,9 @@ export const employees = pgTable("employees", {
 }, (table) => [
 	index("idx_employees_created_by").using("btree", table.createdByUserId.asc().nullsLast().op("uuid_ops")),
 	index("idx_employees_date_of_joining").using("btree", table.dateOfJoining.asc().nullsLast().op("date_ops")),
-	index("idx_employees_org_active").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("uuid_ops")).where(sql`((status)::text = 'active'::text)`),
-	index("idx_employees_org_empid").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.employeeId.asc().nullsLast().op("uuid_ops")),
-	index("idx_employees_org_status").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("uuid_ops")),
+	index("idx_employees_org_active").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("uuid_ops")).where(sql`((status)::text = 'active'::text)`),
+	index("idx_employees_org_empid").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.employeeId.asc().nullsLast().op("uuid_ops")),
+	index("idx_employees_org_status").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("text_ops")),
 	index("idx_employees_phone").using("btree", table.phoneNumber.asc().nullsLast().op("text_ops")).where(sql`(phone_number IS NOT NULL)`),
 	index("idx_employees_salary").using("btree", table.salary.asc().nullsLast().op("numeric_ops")),
 	index("idx_employees_salary_type").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.salaryType.asc().nullsLast().op("uuid_ops")),
@@ -235,140 +369,6 @@ export const employeeSalaryHistory = pgTable("employee_salary_history", {
   WHERE ((ou.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (ou.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
 	check("salary_history_salary_type_check", sql`((previous_salary_type)::text = ANY ((ARRAY['monthly'::character varying, 'daily'::character varying, 'hourly'::character varying])::text[])) AND ((new_salary_type)::text = ANY ((ARRAY['monthly'::character varying, 'daily'::character varying, 'hourly'::character varying])::text[]))`),
 	check("salary_history_salary_positive", sql`(previous_salary >= (0)::numeric) AND (new_salary >= (0)::numeric)`),
-]);
-
-export const attendanceRecords = pgTable("attendance_records", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	organizationId: uuid("organization_id").notNull(),
-	employeeId: uuid("employee_id").notNull(),
-	date: date().notNull(),
-	status: varchar({ length: 20 }).notNull(),
-	notes: text(),
-	leaveDays: numeric("leave_days", { precision: 3, scale:  1 }),
-	leaveType: varchar("leave_type", { length: 20 }),
-	isPaidLeave: boolean("is_paid_leave").default(true),
-	balanceBefore: numeric("balance_before", { precision: 5, scale:  1 }),
-	balanceAfter: numeric("balance_after", { precision: 5, scale:  1 }),
-	createdByUserId: uuid("created_by_user_id"),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
-	updatedByUserId: uuid("updated_by_user_id"),
-	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
-}, (table) => [
-	index("idx_attendance_created_by").using("btree", table.createdByUserId.asc().nullsLast().op("uuid_ops")),
-	index("idx_attendance_employee_date").using("btree", table.employeeId.asc().nullsLast().op("date_ops"), table.date.desc().nullsFirst().op("date_ops")),
-	index("idx_attendance_leaves").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.leaveType.asc().nullsLast().op("text_ops")).where(sql`((status)::text = 'on_leave'::text)`),
-	index("idx_attendance_org_date").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.date.desc().nullsFirst().op("uuid_ops")),
-	index("idx_attendance_org_month").using("btree", sql`organization_id`, sql`EXTRACT(year FROM date)`, sql`EXTRACT(month FROM date)`),
-	index("idx_attendance_org_status").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("uuid_ops")),
-	index("idx_attendance_paid_leaves").using("btree", table.organizationId.asc().nullsLast().op("bool_ops"), table.isPaidLeave.asc().nullsLast().op("uuid_ops")).where(sql`((status)::text = 'on_leave'::text)`),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "attendance_records_organization_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.employeeId],
-			foreignColumns: [employees.id],
-			name: "attendance_records_employee_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.createdByUserId],
-			foreignColumns: [users.id],
-			name: "attendance_records_created_by_user_id_fkey"
-		}).onDelete("set null"),
-	foreignKey({
-			columns: [table.updatedByUserId],
-			foreignColumns: [users.id],
-			name: "attendance_records_updated_by_user_id_fkey"
-		}).onDelete("set null"),
-	unique("unique_employee_date").on(table.employeeId, table.date),
-	pgPolicy("attendance_org_member_access", { as: "permissive", for: "all", to: ["public"], using: sql`((organization_id IN ( SELECT organization_users.organization_id
-   FROM organization_users
-  WHERE ((organization_users.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (organization_users.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
-	check("attendance_records_status_check", sql`(status)::text = ANY ((ARRAY['present'::character varying, 'absent'::character varying, 'half_day'::character varying, 'on_leave'::character varying])::text[])`),
-	check("attendance_records_leave_days_check", sql`leave_days = ANY (ARRAY[0.5, 1.0])`),
-	check("attendance_records_leave_type_check", sql`(leave_type)::text = ANY ((ARRAY['casual'::character varying, 'sick'::character varying, 'earned'::character varying, 'unpaid'::character varying, 'other'::character varying])::text[])`),
-	check("leave_fields_required", sql`(((status)::text = 'on_leave'::text) AND (leave_days IS NOT NULL) AND (leave_type IS NOT NULL)) OR (((status)::text <> 'on_leave'::text) AND (leave_days IS NULL) AND (leave_type IS NULL) AND (balance_before IS NULL) AND (balance_after IS NULL))`),
-]);
-
-export const employeeLeaveBalances = pgTable("employee_leave_balances", {
-	employeeId: uuid("employee_id").primaryKey().notNull(),
-	organizationId: uuid("organization_id").notNull(),
-	totalBalance: numeric("total_balance", { precision: 5, scale:  1 }).default('0.0').notNull(),
-	accrualType: varchar("accrual_type", { length: 20 }).default('none'),
-	accrualRate: numeric("accrual_rate", { precision: 4, scale:  1 }).default('0.0'),
-	maxBalance: numeric("max_balance", { precision: 5, scale:  1 }).default('30.0'),
-	effectiveFrom: date("effective_from"),
-	ytdLeavesTaken: numeric("ytd_leaves_taken", { precision: 5, scale:  1 }).default('0.0').notNull(),
-	ytdLeavesAccrued: numeric("ytd_leaves_accrued", { precision: 5, scale:  1 }).default('0.0').notNull(),
-	lastAccrualDate: date("last_accrual_date"),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
-	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
-}, (table) => [
-	index("idx_leave_balance_accrual_pending").using("btree", table.lastAccrualDate.asc().nullsLast().op("date_ops"), table.accrualType.asc().nullsLast().op("date_ops")).where(sql`((accrual_type)::text = ANY ((ARRAY['monthly'::character varying, 'annual'::character varying])::text[]))`),
-	index("idx_leave_balance_accrual_type").using("btree", table.accrualType.asc().nullsLast().op("text_ops")).where(sql`((accrual_type)::text <> 'none'::text)`),
-	index("idx_leave_balance_org").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops")),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "employee_leave_balances_organization_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.employeeId],
-			foreignColumns: [employees.id],
-			name: "employee_leave_balances_employee_id_fkey"
-		}).onDelete("cascade"),
-	pgPolicy("leave_balance_org_member_access", { as: "permissive", for: "all", to: ["public"], using: sql`((organization_id IN ( SELECT organization_users.organization_id
-   FROM organization_users
-  WHERE ((organization_users.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (organization_users.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
-	check("employee_leave_balances_total_balance_check", sql`total_balance >= (0)::numeric`),
-	check("employee_leave_balances_accrual_type_check", sql`(accrual_type)::text = ANY ((ARRAY['monthly'::character varying, 'annual'::character varying, 'none'::character varying])::text[])`),
-	check("employee_leave_balances_accrual_rate_check", sql`accrual_rate >= (0)::numeric`),
-	check("employee_leave_balances_max_balance_check", sql`max_balance > (0)::numeric`),
-]);
-
-export const leaveBalanceHistory = pgTable("leave_balance_history", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	organizationId: uuid("organization_id").notNull(),
-	employeeId: uuid("employee_id").notNull(),
-	attendanceRecordId: uuid("attendance_record_id"),
-	changeType: varchar("change_type", { length: 30 }).notNull(),
-	balanceBefore: numeric("balance_before", { precision: 5, scale:  1 }).notNull(),
-	balanceChange: numeric("balance_change", { precision: 5, scale:  1 }).notNull(),
-	balanceAfter: numeric("balance_after", { precision: 5, scale:  1 }).notNull(),
-	reason: text().notNull(),
-	notes: text(),
-	changedByUserId: uuid("changed_by_user_id"),
-	changedAt: timestamp("changed_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
-}, (table) => [
-	index("idx_balance_history_changed_by").using("btree", table.changedByUserId.asc().nullsLast().op("uuid_ops")),
-	index("idx_balance_history_employee").using("btree", table.employeeId.asc().nullsLast().op("timestamptz_ops"), table.changedAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("idx_balance_history_org").using("btree", table.organizationId.asc().nullsLast().op("timestamptz_ops"), table.changedAt.desc().nullsFirst().op("uuid_ops")),
-	index("idx_balance_history_type").using("btree", table.changeType.asc().nullsLast().op("text_ops")),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "leave_balance_history_organization_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.employeeId],
-			foreignColumns: [employees.id],
-			name: "leave_balance_history_employee_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.attendanceRecordId],
-			foreignColumns: [attendanceRecords.id],
-			name: "leave_balance_history_attendance_record_id_fkey"
-		}).onDelete("set null"),
-	foreignKey({
-			columns: [table.changedByUserId],
-			foreignColumns: [users.id],
-			name: "leave_balance_history_changed_by_user_id_fkey"
-		}).onDelete("set null"),
-	pgPolicy("balance_history_org_member_access", { as: "permissive", for: "all", to: ["public"], using: sql`((organization_id IN ( SELECT organization_users.organization_id
-   FROM organization_users
-  WHERE ((organization_users.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (organization_users.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
-	check("leave_balance_history_change_type_check", sql`(change_type)::text = ANY ((ARRAY['leave_deduction'::character varying, 'leave_restoration'::character varying, 'accrual'::character varying, 'manual_adjustment'::character varying, 'initial_setup'::character varying, 'bonus'::character varying, 'carry_forward'::character varying])::text[])`),
 ]);
 
 export const employeeAdvances = pgTable("employee_advances", {
@@ -431,6 +431,7 @@ export const employeeAdvances = pgTable("employee_advances", {
 	pgPolicy("advances_org_member_access", { as: "permissive", for: "all", to: ["public"], using: sql`((organization_id IN ( SELECT organization_users.organization_id
    FROM organization_users
   WHERE ((organization_users.user_id = (current_setting('app.current_user_id'::text, true))::uuid) AND (organization_users.is_active = true)))) OR (current_setting('app.bypass_rls'::text, true) = 'true'::text))` }),
+	check("loan_fields_required", sql`(((advance_type)::text = 'loan'::text) AND (installments IS NOT NULL) AND (monthly_installment IS NOT NULL) AND (interest_rate IS NOT NULL) AND (loan_start_date IS NOT NULL) AND (remaining_balance IS NOT NULL)) OR (((advance_type)::text = 'advance'::text) AND (installments IS NULL) AND (monthly_installment IS NULL) AND (interest_rate IS NULL) AND (loan_start_date IS NULL))`),
 	check("employee_advances_amount_check", sql`(amount > (0)::numeric) AND (amount <= (1000000)::numeric)`),
 	check("employee_advances_advance_type_check", sql`(advance_type)::text = ANY ((ARRAY['advance'::character varying, 'loan'::character varying])::text[])`),
 	check("employee_advances_installments_check", sql`(installments >= 1) AND (installments <= 60)`),
@@ -439,7 +440,6 @@ export const employeeAdvances = pgTable("employee_advances", {
 	check("employee_advances_status_check", sql`(status)::text = ANY ((ARRAY['pending'::character varying, 'active'::character varying, 'cleared'::character varying, 'completed'::character varying, 'cancelled'::character varying, 'unrecoverable'::character varying])::text[])`),
 	check("employee_advances_paid_installments_check", sql`paid_installments >= 0`),
 	check("employee_advances_remaining_balance_check", sql`remaining_balance >= (0)::numeric`),
-	check("loan_fields_required", sql`(((advance_type)::text = 'loan'::text) AND (installments IS NOT NULL) AND (monthly_installment IS NOT NULL) AND (interest_rate IS NOT NULL) AND (loan_start_date IS NOT NULL) AND (remaining_balance IS NOT NULL)) OR (((advance_type)::text = 'advance'::text) AND (installments IS NULL) AND (monthly_installment IS NULL) AND (interest_rate IS NULL) AND (loan_start_date IS NULL))`),
 	check("valid_loan_balance", sql`((advance_type)::text = 'advance'::text) OR (remaining_balance <= amount)`),
 ]);
 
@@ -502,14 +502,14 @@ export const payments = pgTable("payments", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
-	index("idx_payments_completed").using("btree", table.organizationId.asc().nullsLast().op("date_ops"), table.employeeId.asc().nullsLast().op("uuid_ops"), table.paymentDate.desc().nullsFirst().op("uuid_ops")).where(sql`((status)::text = 'completed'::text)`),
+	index("idx_payments_completed").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.employeeId.asc().nullsLast().op("date_ops"), table.paymentDate.desc().nullsFirst().op("uuid_ops")).where(sql`((status)::text = 'completed'::text)`),
 	index("idx_payments_created_by").using("btree", table.createdByUserId.asc().nullsLast().op("uuid_ops")),
-	index("idx_payments_employee").using("btree", table.employeeId.asc().nullsLast().op("date_ops"), table.paymentDate.desc().nullsFirst().op("date_ops")),
-	index("idx_payments_method").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.paymentMethod.asc().nullsLast().op("text_ops")),
-	index("idx_payments_org").using("btree", table.organizationId.asc().nullsLast().op("date_ops"), table.paymentDate.desc().nullsFirst().op("date_ops")),
-	index("idx_payments_period").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.periodStart.asc().nullsLast().op("uuid_ops"), table.periodEnd.asc().nullsLast().op("date_ops")),
+	index("idx_payments_employee").using("btree", table.employeeId.asc().nullsLast().op("uuid_ops"), table.paymentDate.desc().nullsFirst().op("uuid_ops")),
+	index("idx_payments_method").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.paymentMethod.asc().nullsLast().op("uuid_ops")),
+	index("idx_payments_org").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.paymentDate.desc().nullsFirst().op("date_ops")),
+	index("idx_payments_period").using("btree", table.organizationId.asc().nullsLast().op("date_ops"), table.periodStart.asc().nullsLast().op("uuid_ops"), table.periodEnd.asc().nullsLast().op("date_ops")),
 	index("idx_payments_receipt").using("btree", table.organizationId.asc().nullsLast().op("text_ops"), table.receiptNumber.asc().nullsLast().op("uuid_ops")),
-	index("idx_payments_status").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("uuid_ops")),
+	index("idx_payments_status").using("btree", table.organizationId.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("text_ops")),
 	foreignKey({
 			columns: [table.organizationId],
 			foreignColumns: [organizations.id],

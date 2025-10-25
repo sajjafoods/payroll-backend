@@ -1,95 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, organizations, organizationSettings, userSessions, employees, employeeSalaryHistory, attendanceRecords, employeeLeaveBalances, leaveBalanceHistory, employeeAdvances, payments, loanInstallmentHistory, paymentAdvanceClearances, paymentLoanInstallments, organizationUsers } from "./schema";
-
-export const organizationsRelations = relations(organizations, ({one, many}) => ({
-	user: one(users, {
-		fields: [organizations.createdByUserId],
-		references: [users.id]
-	}),
-	organizationSettings: many(organizationSettings),
-	employees: many(employees),
-	attendanceRecords: many(attendanceRecords),
-	employeeLeaveBalances: many(employeeLeaveBalances),
-	leaveBalanceHistories: many(leaveBalanceHistory),
-	employeeAdvances: many(employeeAdvances),
-	loanInstallmentHistories: many(loanInstallmentHistory),
-	payments: many(payments),
-	organizationUsers: many(organizationUsers),
-}));
-
-export const usersRelations = relations(users, ({many}) => ({
-	organizations: many(organizations),
-	userSessions: many(userSessions),
-	employees: many(employees),
-	employeeSalaryHistories: many(employeeSalaryHistory),
-	attendanceRecords_createdByUserId: many(attendanceRecords, {
-		relationName: "attendanceRecords_createdByUserId_users_id"
-	}),
-	attendanceRecords_updatedByUserId: many(attendanceRecords, {
-		relationName: "attendanceRecords_updatedByUserId_users_id"
-	}),
-	leaveBalanceHistories: many(leaveBalanceHistory),
-	employeeAdvances_deletedByUserId: many(employeeAdvances, {
-		relationName: "employeeAdvances_deletedByUserId_users_id"
-	}),
-	employeeAdvances_createdByUserId: many(employeeAdvances, {
-		relationName: "employeeAdvances_createdByUserId_users_id"
-	}),
-	payments_voidedByUserId: many(payments, {
-		relationName: "payments_voidedByUserId_users_id"
-	}),
-	payments_createdByUserId: many(payments, {
-		relationName: "payments_createdByUserId_users_id"
-	}),
-	organizationUsers_userId: many(organizationUsers, {
-		relationName: "organizationUsers_userId_users_id"
-	}),
-	organizationUsers_invitedByUserId: many(organizationUsers, {
-		relationName: "organizationUsers_invitedByUserId_users_id"
-	}),
-}));
-
-export const organizationSettingsRelations = relations(organizationSettings, ({one}) => ({
-	organization: one(organizations, {
-		fields: [organizationSettings.organizationId],
-		references: [organizations.id]
-	}),
-}));
-
-export const userSessionsRelations = relations(userSessions, ({one}) => ({
-	user: one(users, {
-		fields: [userSessions.userId],
-		references: [users.id]
-	}),
-}));
-
-export const employeesRelations = relations(employees, ({one, many}) => ({
-	organization: one(organizations, {
-		fields: [employees.organizationId],
-		references: [organizations.id]
-	}),
-	user: one(users, {
-		fields: [employees.createdByUserId],
-		references: [users.id]
-	}),
-	employeeSalaryHistories: many(employeeSalaryHistory),
-	attendanceRecords: many(attendanceRecords),
-	employeeLeaveBalances: many(employeeLeaveBalances),
-	leaveBalanceHistories: many(leaveBalanceHistory),
-	employeeAdvances: many(employeeAdvances),
-	payments: many(payments),
-}));
-
-export const employeeSalaryHistoryRelations = relations(employeeSalaryHistory, ({one}) => ({
-	employee: one(employees, {
-		fields: [employeeSalaryHistory.employeeId],
-		references: [employees.id]
-	}),
-	user: one(users, {
-		fields: [employeeSalaryHistory.changedByUserId],
-		references: [users.id]
-	}),
-}));
+import { organizations, attendanceRecords, employees, users, employeeLeaveBalances, leaveBalanceHistory, organizationSettings, userSessions, employeeSalaryHistory, employeeAdvances, payments, loanInstallmentHistory, paymentAdvanceClearances, paymentLoanInstallments, organizationUsers } from "./schema";
 
 export const attendanceRecordsRelations = relations(attendanceRecords, ({one, many}) => ({
 	organization: one(organizations, {
@@ -113,14 +23,79 @@ export const attendanceRecordsRelations = relations(attendanceRecords, ({one, ma
 	leaveBalanceHistories: many(leaveBalanceHistory),
 }));
 
-export const employeeLeaveBalancesRelations = relations(employeeLeaveBalances, ({one}) => ({
+export const organizationsRelations = relations(organizations, ({one, many}) => ({
+	attendanceRecords: many(attendanceRecords),
+	employeeLeaveBalances: many(employeeLeaveBalances),
+	leaveBalanceHistories: many(leaveBalanceHistory),
+	user: one(users, {
+		fields: [organizations.createdByUserId],
+		references: [users.id]
+	}),
+	organizationSettings: many(organizationSettings),
+	employees: many(employees),
+	employeeAdvances: many(employeeAdvances),
+	loanInstallmentHistories: many(loanInstallmentHistory),
+	payments: many(payments),
+	organizationUsers: many(organizationUsers),
+}));
+
+export const employeesRelations = relations(employees, ({one, many}) => ({
+	attendanceRecords: many(attendanceRecords),
+	employeeLeaveBalances: many(employeeLeaveBalances),
+	leaveBalanceHistories: many(leaveBalanceHistory),
 	organization: one(organizations, {
-		fields: [employeeLeaveBalances.organizationId],
+		fields: [employees.organizationId],
 		references: [organizations.id]
 	}),
+	user: one(users, {
+		fields: [employees.createdByUserId],
+		references: [users.id]
+	}),
+	employeeSalaryHistories: many(employeeSalaryHistory),
+	employeeAdvances: many(employeeAdvances),
+	payments: many(payments),
+}));
+
+export const usersRelations = relations(users, ({many}) => ({
+	attendanceRecords_createdByUserId: many(attendanceRecords, {
+		relationName: "attendanceRecords_createdByUserId_users_id"
+	}),
+	attendanceRecords_updatedByUserId: many(attendanceRecords, {
+		relationName: "attendanceRecords_updatedByUserId_users_id"
+	}),
+	leaveBalanceHistories: many(leaveBalanceHistory),
+	organizations: many(organizations),
+	userSessions: many(userSessions),
+	employees: many(employees),
+	employeeSalaryHistories: many(employeeSalaryHistory),
+	employeeAdvances_deletedByUserId: many(employeeAdvances, {
+		relationName: "employeeAdvances_deletedByUserId_users_id"
+	}),
+	employeeAdvances_createdByUserId: many(employeeAdvances, {
+		relationName: "employeeAdvances_createdByUserId_users_id"
+	}),
+	payments_voidedByUserId: many(payments, {
+		relationName: "payments_voidedByUserId_users_id"
+	}),
+	payments_createdByUserId: many(payments, {
+		relationName: "payments_createdByUserId_users_id"
+	}),
+	organizationUsers_userId: many(organizationUsers, {
+		relationName: "organizationUsers_userId_users_id"
+	}),
+	organizationUsers_invitedByUserId: many(organizationUsers, {
+		relationName: "organizationUsers_invitedByUserId_users_id"
+	}),
+}));
+
+export const employeeLeaveBalancesRelations = relations(employeeLeaveBalances, ({one}) => ({
 	employee: one(employees, {
 		fields: [employeeLeaveBalances.employeeId],
 		references: [employees.id]
+	}),
+	organization: one(organizations, {
+		fields: [employeeLeaveBalances.organizationId],
+		references: [organizations.id]
 	}),
 }));
 
@@ -139,6 +114,31 @@ export const leaveBalanceHistoryRelations = relations(leaveBalanceHistory, ({one
 	}),
 	user: one(users, {
 		fields: [leaveBalanceHistory.changedByUserId],
+		references: [users.id]
+	}),
+}));
+
+export const organizationSettingsRelations = relations(organizationSettings, ({one}) => ({
+	organization: one(organizations, {
+		fields: [organizationSettings.organizationId],
+		references: [organizations.id]
+	}),
+}));
+
+export const userSessionsRelations = relations(userSessions, ({one}) => ({
+	user: one(users, {
+		fields: [userSessions.userId],
+		references: [users.id]
+	}),
+}));
+
+export const employeeSalaryHistoryRelations = relations(employeeSalaryHistory, ({one}) => ({
+	employee: one(employees, {
+		fields: [employeeSalaryHistory.employeeId],
+		references: [employees.id]
+	}),
+	user: one(users, {
+		fields: [employeeSalaryHistory.changedByUserId],
 		references: [users.id]
 	}),
 }));
