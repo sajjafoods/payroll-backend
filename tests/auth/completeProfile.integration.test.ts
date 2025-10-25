@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
 import { handler } from '../../src/handlers/auth/completeProfile';
-import { APIGatewayProxyEvent } from 'aws-lambda';
 import { db } from '../../src/db/client';
 import { users, organizations, organizationUsers } from '../../src/db/schema/schema';
 import { eq, sql } from 'drizzle-orm';
 import { generateTokenPair } from '../../src/utils/jwt';
-import { getRedisClient } from '../../src/config/redis';
+import { 
+  cleanupTestUser,
+  teardownRedis,
+  createAuthenticatedMockEvent,
+  generateUniquePhoneNumber
+} from '../helpers';
 
 /**
  * Integration tests for complete-profile endpoint
@@ -13,18 +17,12 @@ import { getRedisClient } from '../../src/config/redis';
  * Run with: npm test -- completeProfile.integration.test.ts
  */
 describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
-  // Generate unique phone number for each test run to avoid conflicts
-  const testPhoneNumber = `+9198765432${Math.floor(Math.random() * 100).toString().padStart(2, '0')}`;
+  const testPhoneNumber = generateUniquePhoneNumber();
   let testUserId: string;
   let testOrgId: string;
   let testAccessToken: string;
-  
-  let event: APIGatewayProxyEvent;
 
   beforeAll(async () => {
-    // Ensure database connection is ready
-    // The database should be running via Docker
-    
     // Create a test user and organization for testing
     const [user] = await db
       .insert(users)
@@ -40,7 +38,7 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     const [org] = await db
       .insert(organizations)
       .values({
-        name: `My Business ${Date.now()}`, // Unique name to avoid conflicts
+        name: `My Business ${Date.now()}`,
         phoneNumber: testPhoneNumber,
         setupComplete: false,
         createdByUserId: testUserId,
@@ -79,21 +77,11 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
   });
 
   beforeEach(async () => {
-    // Reset database state before each test to ensure isolation
-    // This prevents tests from affecting each other
-    const [updatedUser] = await db
-      .update(users)
-      .set({
-        name: 'Test User',
-        updatedAt: sql`CURRENT_TIMESTAMP`,
-      })
-      .where(eq(users.id, testUserId))
-      .returning();
-
-    const [updatedOrg] = await db
+    // Reset organization state before each test
+    await db
       .update(organizations)
       .set({
-        name: `My Business ${Date.now()}`, // Reset with unique name
+        name: `My Business ${Date.now()}`,
         setupComplete: false,
         address: null,
         businessType: null,
@@ -101,69 +89,34 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
         pan: null,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
-      .where(eq(organizations.id, testOrgId))
-      .returning();
+      .where(eq(organizations.id, testOrgId));
 
-    // Verify the reset was successful
-    if (!updatedUser) {
-      throw new Error(`Failed to reset user ${testUserId} in beforeEach`);
-    }
-    if (!updatedOrg) {
-      throw new Error(`Failed to reset organization ${testOrgId} in beforeEach`);
-    }
-
-    // Base event structure
-    event = {
-      body: null,
-      headers: {
-        Authorization: `Bearer ${testAccessToken}`,
-      },
-      multiValueHeaders: {},
-      httpMethod: 'PATCH',
-      isBase64Encoded: false,
-      path: '/api/v1/auth/complete-profile',
-      pathParameters: null,
-      queryStringParameters: null,
-      multiValueQueryStringParameters: null,
-      stageVariables: null,
-      requestContext: {
-        identity: {
-          sourceIp: '192.168.1.100',
-        },
-      } as any,
-      resource: '',
-    };
+    // Reset user state
+    await db
+      .update(users)
+      .set({
+        name: 'Test User',
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(users.id, testUserId));
   });
 
   afterAll(async () => {
-    // Clean up test data
-    try {
-      if (testUserId && testOrgId) {
-        // Delete organizationUsers by composite key
-        await db.delete(organizationUsers)
-          .where(sql`${organizationUsers.organizationId} = ${testOrgId} AND ${organizationUsers.userId} = ${testUserId}`);
-      }
-      if (testOrgId) {
-        await db.delete(organizations).where(eq(organizations.id, testOrgId));
-      }
-      if (testUserId) {
-        await db.delete(users).where(eq(users.id, testUserId));
-      }
-    } catch (error) {
-      console.log('Cleanup error (may be normal):', error);
-    }
-
-    // Close Redis connection
-    const redis = getRedisClient();
-    await redis.disconnect();
+    await cleanupTestUser(testPhoneNumber);
+    await teardownRedis();
   });
 
   describe('Successful Profile Completion', () => {
     it('should complete profile with all required fields', async () => {
-      event.body = JSON.stringify({
-        ownerName: 'Raj Kumar',
-        organizationName: 'Raj Electronics',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Raj Kumar',
+          organizationName: 'Raj Electronics',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -190,15 +143,20 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     }, 10000);
 
     it('should complete profile with all optional fields', async () => {
-      event.body = JSON.stringify({
-        ownerName: 'Suresh Patel',
-        organizationName: 'Suresh Manufacturing',
-        organizationAddress: '123 MG Road, Bangalore, Karnataka 560001',
-        industry: 'manufacturing',
-        employeeCount: 25,
-        gstNumber: '29ABCDE1234F1Z5',
-        panNumber: 'ABCDE1234F',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Suresh Patel',
+          organizationName: 'Suresh Manufacturing',
+          organizationAddress: '123 MG Road, Bangalore, Karnataka 560001',
+          industry: 'manufacturing',
+          employeeCount: 25,
+          gstNumber: '29ABCDE1234F1Z5',
+          panNumber: 'ABCDE1234F',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -223,11 +181,16 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
 
   describe('Authentication Errors', () => {
     it('should reject request without Authorization header', async () => {
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+        },
+        '/api/v1/auth/complete-profile',
+        '',
+        'PATCH'
+      );
       event.headers = {};
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-      });
 
       const result = await handler(event);
 
@@ -239,11 +202,16 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject invalid token format', async () => {
-      event.headers.Authorization = 'InvalidTokenFormat';
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+        },
+        '/api/v1/auth/complete-profile',
+        '',
+        'PATCH'
+      );
+      event.headers = { Authorization: 'InvalidTokenFormat' };
 
       const result = await handler(event);
 
@@ -255,11 +223,15 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject expired/invalid token', async () => {
-      event.headers.Authorization = 'Bearer invalid_token_xyz';
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+        },
+        '/api/v1/auth/complete-profile',
+        'invalid_token_xyz',
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -273,9 +245,14 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
 
   describe('Validation Errors', () => {
     it('should reject missing ownerName', async () => {
-      event.body = JSON.stringify({
-        organizationName: 'Test Org',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          organizationName: 'Test Org',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -288,10 +265,15 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject ownerName too short', async () => {
-      event.body = JSON.stringify({
-        ownerName: 'A',
-        organizationName: 'Test Org',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'A',
+          organizationName: 'Test Org',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -303,11 +285,16 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject invalid GST number format', async () => {
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-        gstNumber: 'INVALID_GST',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+          gstNumber: 'INVALID_GST',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -319,11 +306,16 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject invalid PAN number format', async () => {
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-        panNumber: 'INVALID',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+          panNumber: 'INVALID',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -335,11 +327,16 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject invalid industry value', async () => {
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-        industry: 'invalid_industry',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+          industry: 'invalid_industry',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -350,11 +347,16 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject employeeCount out of range', async () => {
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-        employeeCount: 20000, // Exceeds max of 10000
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+          employeeCount: 20000,
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -368,16 +370,20 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
 
   describe('Business Logic Errors', () => {
     it('should reject if profile already completed', async () => {
-      // Ensure setupComplete is true
       await db
         .update(organizations)
         .set({ setupComplete: true })
         .where(eq(organizations.id, testOrgId));
 
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -391,7 +397,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject duplicate organization name', async () => {
-      // Create another organization with a specific name
       const [anotherOrg] = await db
         .insert(organizations)
         .values({
@@ -401,10 +406,15 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
         })
         .returning();
 
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Existing Business Name',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Existing Business Name',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -420,7 +430,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject if user is not owner', async () => {
-      // Generate token with non-owner role
       const nonOwnerToken = generateTokenPair({
         userId: testUserId,
         organizationId: testOrgId,
@@ -428,11 +437,15 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
         sessionId: 'test_session',
       });
 
-      event.headers.Authorization = `Bearer ${nonOwnerToken.accessToken}`;
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Test Org',
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Test Org',
+        },
+        '/api/v1/auth/complete-profile',
+        nonOwnerToken.accessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -446,6 +459,12 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
 
   describe('Edge Cases', () => {
     it('should handle invalid JSON in request body', async () => {
+      const event = createAuthenticatedMockEvent(
+        {},
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
       event.body = 'invalid json {{{';
 
       const result = await handler(event);
@@ -458,7 +477,12 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should handle empty request body', async () => {
-      event.body = '{}';
+      const event = createAuthenticatedMockEvent(
+        {},
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -469,16 +493,20 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should allow updating to same organization name', async () => {
-      // Set the org name to 'Current Name' for this specific test
       await db
         .update(organizations)
         .set({ name: 'Current Name' })
         .where(eq(organizations.id, testOrgId));
 
-      event.body = JSON.stringify({
-        ownerName: 'Test User',
-        organizationName: 'Current Name', // Same as current
-      });
+      const event = createAuthenticatedMockEvent(
+        {
+          ownerName: 'Test User',
+          organizationName: 'Current Name',
+        },
+        '/api/v1/auth/complete-profile',
+        testAccessToken,
+        'PATCH'
+      );
 
       const result = await handler(event);
 
@@ -505,17 +533,22 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
       ];
 
       for (const industry of validIndustries) {
-        // Reset setupComplete for each iteration since previous iteration sets it to true
+        // Reset setupComplete for each iteration
         await db
           .update(organizations)
           .set({ setupComplete: false })
           .where(eq(organizations.id, testOrgId));
 
-        event.body = JSON.stringify({
-          ownerName: 'Test User',
-          organizationName: `Test ${industry} Business`,
-          industry,
-        });
+        const event = createAuthenticatedMockEvent(
+          {
+            ownerName: 'Test User',
+            organizationName: `Test ${industry} Business`,
+            industry,
+          },
+          '/api/v1/auth/complete-profile',
+          testAccessToken,
+          'PATCH'
+        );
 
         const result = await handler(event);
         expect(result.statusCode).toBe(200);

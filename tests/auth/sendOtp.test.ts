@@ -1,58 +1,32 @@
 import { handler } from '../../src/handlers/auth/sendOtp';
-import { APIGatewayProxyEvent } from 'aws-lambda';
-import { getRedisClient } from '../../src/config/redis';
+import { 
+  setupRedisForTests, 
+  clearOtpRateLimits, 
+  teardownRedis,
+  createMockEvent,
+  generateUniquePhoneNumber 
+} from '../helpers';
 
 /**
- * Test file for Send OTP endpoint
+ * Test file for Send OTP endpoint (Refactored with helpers)
  * 
  * To run tests:
  * 1. Ensure Redis is running: docker-compose up -d
- * 2. Run tests: npm test tests/auth/sendOtp.test.ts
+ * 2. Run tests: npm test tests/auth/sendOtp.refactored.test.ts
  */
 
-describe('Send OTP Handler', () => {
-  // Clear Redis before all tests to ensure clean state
-  beforeAll(async () => {
-    const redis = getRedisClient();
-    await redis.flushdb();
-  });
-
-  // Clear Redis before each test to prevent rate limiting from previous tests
-  beforeEach(async () => {
-    const redis = getRedisClient();
-    // Clear all rate limit keys
-    const keys = await redis.keys('otp:ratelimit:*');
-    if (keys.length > 0) {
-      await redis.del(...keys);
-    }
-  });
-
-  // Clean up Redis connection after all tests
-  afterAll(async () => {
-    const redis = getRedisClient();
-    // Use disconnect instead of quit to prevent hanging
-    await redis.disconnect();
-  });
-  
-  const createMockEvent = (body: any): APIGatewayProxyEvent => {
-    return {
-      body: JSON.stringify(body),
-      headers: {},
-      httpMethod: 'POST',
-      path: '/api/v1/auth/send-otp',
-      requestContext: {
-        http: {
-          sourceIp: '127.0.0.1',
-        },
-      },
-    } as any;
-  };
+describe('Send OTP Handler (Refactored)', () => {
+  // Setup/Teardown using helpers
+  beforeAll(() => setupRedisForTests());
+  beforeEach(() => clearOtpRateLimits());
+  afterAll(() => teardownRedis());
 
   describe('Valid Requests', () => {
     it('should send OTP for valid Indian mobile number', async () => {
-      const event = createMockEvent({
-        phoneNumber: '+919876543210',
-      });
+      const event = createMockEvent(
+        { phoneNumber: '+919876543210' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
@@ -66,9 +40,10 @@ describe('Send OTP Handler', () => {
     });
 
     it('should accept phone number without country code and apply default +91', async () => {
-      const event = createMockEvent({
-        phoneNumber: '9876543210',
-      });
+      const event = createMockEvent(
+        { phoneNumber: '9876543210' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
@@ -79,10 +54,10 @@ describe('Send OTP Handler', () => {
     });
 
     it('should accept phone number with explicit country code parameter', async () => {
-      const event = createMockEvent({
-        phoneNumber: '9876543210',
-        countryCode: '+91',
-      });
+      const event = createMockEvent(
+        { phoneNumber: '9876543210', countryCode: '+91' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
@@ -94,23 +69,24 @@ describe('Send OTP Handler', () => {
 
   describe('Invalid Requests', () => {
     it('should reject invalid phone number format', async () => {
-      const event = createMockEvent({
-        phoneNumber: '123456',
-      });
+      const event = createMockEvent(
+        { phoneNumber: '123456' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
 
       expect(response.statusCode).toBe(400);
       expect(body.success).toBe(false);
-      // Zod validation returns VALIDATION_ERROR, not MISSING_REQUIRED_FIELD
       expect(body.error.code).toBeDefined();
     });
 
     it('should reject phone number not starting with 6-9', async () => {
-      const event = createMockEvent({
-        phoneNumber: '+915876543210',
-      });
+      const event = createMockEvent(
+        { phoneNumber: '+915876543210' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
@@ -121,7 +97,7 @@ describe('Send OTP Handler', () => {
     });
 
     it('should reject missing phone number', async () => {
-      const event = createMockEvent({});
+      const event = createMockEvent({}, '/api/v1/auth/send-otp');
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
@@ -134,11 +110,14 @@ describe('Send OTP Handler', () => {
 
   describe('Rate Limiting', () => {
     it('should allow first 3 requests from same number', async () => {
-      const phoneNumber = '+919999888877';
+      const phoneNumber = generateUniquePhoneNumber();
       
       // Make 3 requests
       for (let i = 0; i < 3; i++) {
-        const event = createMockEvent({ phoneNumber });
+        const event = createMockEvent(
+          { phoneNumber },
+          '/api/v1/auth/send-otp'
+        );
         const response = await handler(event);
         const body = JSON.parse(response.body);
         
@@ -148,11 +127,14 @@ describe('Send OTP Handler', () => {
     });
 
     it('should rate limit after 3 requests', async () => {
-      const phoneNumber = '+919999888866';
+      const phoneNumber = generateUniquePhoneNumber();
       
       // Make 4 requests
       for (let i = 0; i < 4; i++) {
-        const event = createMockEvent({ phoneNumber });
+        const event = createMockEvent(
+          { phoneNumber },
+          '/api/v1/auth/send-otp'
+        );
         const response = await handler(event);
         
         if (i < 3) {
@@ -191,9 +173,10 @@ describe('Send OTP Handler', () => {
     });
 
     it('should include requestId in error responses', async () => {
-      const event = createMockEvent({
-        phoneNumber: 'invalid',
-      });
+      const event = createMockEvent(
+        { phoneNumber: 'invalid' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
@@ -205,9 +188,10 @@ describe('Send OTP Handler', () => {
 
   describe('Response Format', () => {
     it('should mask phone number in response', async () => {
-      const event = createMockEvent({
-        phoneNumber: '+919123456789',
-      });
+      const event = createMockEvent(
+        { phoneNumber: '+919123456789' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
       const body = JSON.parse(response.body);
@@ -218,9 +202,10 @@ describe('Send OTP Handler', () => {
     });
 
     it('should include CORS headers', async () => {
-      const event = createMockEvent({
-        phoneNumber: '+919876543210',
-      });
+      const event = createMockEvent(
+        { phoneNumber: '+919876543210' },
+        '/api/v1/auth/send-otp'
+      );
 
       const response = await handler(event);
 

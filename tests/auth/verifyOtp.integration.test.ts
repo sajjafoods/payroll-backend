@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
 import { handler } from '../../src/handlers/auth/verifyOtp';
-import { APIGatewayProxyEvent } from 'aws-lambda';
 import { db } from '../../src/db/client';
 import { users, organizations, organizationUsers } from '../../src/db/schema/schema';
 import { eq } from 'drizzle-orm';
 import { storeOtp } from '../../src/utils/otp';
-import { getRedisClient } from '../../src/config/redis';
+import { 
+  cleanupTestUser,
+  teardownRedis,
+  createMockEvent,
+  generateUniquePhoneNumber,
+  DEFAULT_TEST_OTP
+} from '../helpers';
 
 /**
  * Integration tests for verify-otp endpoint
@@ -13,121 +18,36 @@ import { getRedisClient } from '../../src/config/redis';
  * Run with: npm test -- verifyOtp.integration.test.ts
  */
 describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
-  const testPhoneNumber = '+919876543210';
-  const validOtp = '123456';
+  const testPhoneNumber = generateUniquePhoneNumber();
   
-  let event: APIGatewayProxyEvent;
-
-  beforeAll(async () => {
-    // Ensure database connection is ready
-    // The database should be running via Docker
-  });
-
   beforeEach(async () => {
-    // Clean up test data before each test
-    try {
-      // Find all users with test phone number
-      const existingUsers = await db.select().from(users).where(eq(users.phoneNumber, testPhoneNumber));
-      
-      for (const user of existingUsers) {
-        // Delete organization_users links
-        await db.delete(organizationUsers).where(eq(organizationUsers.userId, user.id));
-        
-        // Delete organizations created by this user
-        const userOrgs = await db.select().from(organizations).where(eq(organizations.createdByUserId, user.id));
-        for (const org of userOrgs) {
-          await db.delete(organizationUsers).where(eq(organizationUsers.organizationId, org.id));
-          await db.delete(organizations).where(eq(organizations.id, org.id));
-        }
-        
-        // Delete the user
-        await db.delete(users).where(eq(users.id, user.id));
-      }
-      
-      // Also clean up any orphaned organizations with test phone number
-      await db.delete(organizations).where(eq(organizations.phoneNumber, testPhoneNumber));
-    } catch (error) {
-      // Ignore cleanup errors
-      console.log('Cleanup error (may be normal):', error);
-    }
-
-    // Base event structure
-    event = {
-      body: null,
-      headers: {
-        'x-forwarded-for': '192.168.1.100',
-      },
-      multiValueHeaders: {},
-      httpMethod: 'POST',
-      isBase64Encoded: false,
-      path: '/api/v1/auth/verify-otp',
-      pathParameters: null,
-      queryStringParameters: null,
-      multiValueQueryStringParameters: null,
-      stageVariables: null,
-      requestContext: {
-        identity: {
-          sourceIp: '192.168.1.100',
-        },
-      } as any,
-      resource: '',
-    };
+    await cleanupTestUser(testPhoneNumber);
   });
 
   afterAll(async () => {
-    // Clean up test data after all tests
-    try {
-      // Find all users with test phone number
-      const existingUsers = await db.select().from(users).where(eq(users.phoneNumber, testPhoneNumber));
-      
-      for (const user of existingUsers) {
-        // Delete organization_users links
-        await db.delete(organizationUsers).where(eq(organizationUsers.userId, user.id));
-        
-        // Delete organizations created by this user
-        const userOrgs = await db.select().from(organizations).where(eq(organizations.createdByUserId, user.id));
-        for (const org of userOrgs) {
-          await db.delete(organizationUsers).where(eq(organizationUsers.organizationId, org.id));
-          await db.delete(organizations).where(eq(organizations.id, org.id));
-        }
-        
-        // Delete the user
-        await db.delete(users).where(eq(users.id, user.id));
-      }
-      
-      // Also clean up any orphaned organizations with test phone number
-      await db.delete(organizations).where(eq(organizations.phoneNumber, testPhoneNumber));
-    } catch (error) {
-      // Ignore cleanup errors
-      console.log('Final cleanup error (may be normal):', error);
-    }
-
-    // Close Redis connection
-    const redis = getRedisClient();
-    await redis.disconnect();
+    await cleanupTestUser(testPhoneNumber);
+    await teardownRedis();
   });
 
   describe('New User Flow', () => {
     it('should create new user, organization, and return trial subscription', async () => {
-      // Store valid OTP in Redis
-      await storeOtp(testPhoneNumber, validOtp);
+      await storeOtp(testPhoneNumber, DEFAULT_TEST_OTP);
 
-      event.body = JSON.stringify({
+      const event = createMockEvent({
         phoneNumber: testPhoneNumber,
-        otp: validOtp,
+        otp: DEFAULT_TEST_OTP,
         deviceInfo: {
           deviceId: 'test_device_123',
           deviceName: 'Test iPhone',
           platform: 'ios',
         },
-      });
+      }, '/api/v1/auth/verify-otp');
 
       const result = await handler(event);
 
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       
-      // Verify response structure
       expect(body.success).toBe(true);
       expect(body.data.isNewUser).toBe(true);
       expect(body.data.user.phoneNumber).toBe(testPhoneNumber);
@@ -160,33 +80,26 @@ describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
 
   describe('Existing User Flow', () => {
     it('should authenticate existing user and return premium subscription', async () => {
-      // Use a different phone number for this test to avoid conflicts
-      const existingUserPhone = '+919876543211';
-      
-      // Create a user first
-      await storeOtp(existingUserPhone, validOtp);
-      event.body = JSON.stringify({
-        phoneNumber: existingUserPhone,
-        otp: validOtp,
-      });
+      const existingUserPhone = generateUniquePhoneNumber();
       
       // First login (creates user)
-      const firstResult = await handler(event);
-      if (firstResult.statusCode !== 200) {
-        console.error('First login failed:', JSON.parse(firstResult.body));
-      }
+      await storeOtp(existingUserPhone, DEFAULT_TEST_OTP);
+      const firstEvent = createMockEvent({
+        phoneNumber: existingUserPhone,
+        otp: DEFAULT_TEST_OTP,
+      }, '/api/v1/auth/verify-otp');
+      
+      const firstResult = await handler(firstEvent);
       expect(firstResult.statusCode).toBe(200);
 
-      // Store new OTP for second login
-      await storeOtp(existingUserPhone, validOtp);
-
       // Second login (existing user)
-      const result = await handler(event);
+      await storeOtp(existingUserPhone, DEFAULT_TEST_OTP);
+      const secondEvent = createMockEvent({
+        phoneNumber: existingUserPhone,
+        otp: DEFAULT_TEST_OTP,
+      }, '/api/v1/auth/verify-otp');
       
-      // Debug output if test fails
-      if (result.statusCode !== 200) {
-        console.error('Second login failed:', JSON.parse(result.body));
-      }
+      const result = await handler(secondEvent);
 
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
@@ -198,25 +111,17 @@ describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
       expect(body.data.subscription.plan).toBe('premium');
       expect(body.data.nextStep).toBe('dashboard');
       
-      // Clean up this test's data
-      const testUsers = await db.select().from(users).where(eq(users.phoneNumber, existingUserPhone));
-      if (testUsers[0]) {
-        await db.delete(organizationUsers).where(eq(organizationUsers.userId, testUsers[0].id));
-        const userOrgs = await db.select().from(organizations).where(eq(organizations.createdByUserId, testUsers[0].id));
-        for (const org of userOrgs) {
-          await db.delete(organizations).where(eq(organizations.id, org.id));
-        }
-        await db.delete(users).where(eq(users.id, testUsers[0].id));
-      }
+      // Cleanup
+      await cleanupTestUser(existingUserPhone);
     }, 15000);
   });
 
   describe('Validation Errors', () => {
     it('should reject invalid phone number format', async () => {
-      event.body = JSON.stringify({
-        phoneNumber: '123456', // Too short, invalid format
-        otp: validOtp,
-      });
+      const event = createMockEvent({
+        phoneNumber: '123456',
+        otp: DEFAULT_TEST_OTP,
+      }, '/api/v1/auth/verify-otp');
 
       const result = await handler(event);
 
@@ -227,10 +132,10 @@ describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
     });
 
     it('should reject invalid OTP format', async () => {
-      event.body = JSON.stringify({
+      const event = createMockEvent({
         phoneNumber: testPhoneNumber,
-        otp: '12345', // Only 5 digits
-      });
+        otp: '12345',
+      }, '/api/v1/auth/verify-otp');
 
       const result = await handler(event);
 
@@ -241,9 +146,9 @@ describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
     });
 
     it('should reject missing OTP', async () => {
-      event.body = JSON.stringify({
+      const event = createMockEvent({
         phoneNumber: testPhoneNumber,
-      });
+      }, '/api/v1/auth/verify-otp');
 
       const result = await handler(event);
 
@@ -256,14 +161,12 @@ describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
 
   describe('OTP Verification', () => {
     it('should reject invalid OTP', async () => {
-      // Store valid OTP
-      await storeOtp(testPhoneNumber, validOtp);
+      await storeOtp(testPhoneNumber, DEFAULT_TEST_OTP);
 
-      // Try with wrong OTP
-      event.body = JSON.stringify({
+      const event = createMockEvent({
         phoneNumber: testPhoneNumber,
         otp: '999999',
-      });
+      }, '/api/v1/auth/verify-otp');
 
       const result = await handler(event);
 
@@ -274,11 +177,10 @@ describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
     });
 
     it('should reject expired OTP for new user', async () => {
-      // Don't store OTP (simulates expired/non-existent)
-      event.body = JSON.stringify({
-        phoneNumber: '+919999999999', // Different phone number that doesn't exist
-        otp: validOtp,
-      });
+      const event = createMockEvent({
+        phoneNumber: '+919999999999',
+        otp: DEFAULT_TEST_OTP,
+      }, '/api/v1/auth/verify-otp');
 
       const result = await handler(event);
 
@@ -292,63 +194,60 @@ describe('POST /api/v1/auth/verify-otp - Integration Tests', () => {
   describe('Account Locking', () => {
     it('should lock account after 5 failed attempts', async () => {
       // Create user first
-      await storeOtp(testPhoneNumber, validOtp);
-      event.body = JSON.stringify({
+      await storeOtp(testPhoneNumber, DEFAULT_TEST_OTP);
+      const createEvent = createMockEvent({
         phoneNumber: testPhoneNumber,
-        otp: validOtp,
-      });
-      await handler(event);
+        otp: DEFAULT_TEST_OTP,
+      }, '/api/v1/auth/verify-otp');
+      await handler(createEvent);
 
       // Make 5 failed attempts
       for (let i = 0; i < 5; i++) {
-        await storeOtp(testPhoneNumber, validOtp); // Store valid OTP but send wrong one
-        event.body = JSON.stringify({
+        await storeOtp(testPhoneNumber, DEFAULT_TEST_OTP);
+        const failEvent = createMockEvent({
           phoneNumber: testPhoneNumber,
           otp: '999999',
-        });
-        await handler(event);
+        }, '/api/v1/auth/verify-otp');
+        await handler(failEvent);
       }
 
       // 6th attempt should be locked
-      await storeOtp(testPhoneNumber, validOtp);
-      event.body = JSON.stringify({
+      await storeOtp(testPhoneNumber, DEFAULT_TEST_OTP);
+      const lockedEvent = createMockEvent({
         phoneNumber: testPhoneNumber,
-        otp: validOtp, // Even with correct OTP
-      });
+        otp: DEFAULT_TEST_OTP,
+      }, '/api/v1/auth/verify-otp');
       
-      const result = await handler(event);
+      const result = await handler(lockedEvent);
 
       expect(result.statusCode).toBe(423);
       const body = JSON.parse(result.body);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('ACCOUNT_LOCKED');
-      expect(body.error.details.retryAfter).toBe(1800); // 30 minutes
+      expect(body.error.details.retryAfter).toBe(1800);
       expect(body.error.details.lockedUntil).toBeDefined();
     }, 15000);
   });
 
   describe('Device Info Tracking', () => {
     it('should store device information with session', async () => {
-      await storeOtp(testPhoneNumber, validOtp);
+      await storeOtp(testPhoneNumber, DEFAULT_TEST_OTP);
 
-      event.body = JSON.stringify({
+      const event = createMockEvent({
         phoneNumber: testPhoneNumber,
-        otp: validOtp,
+        otp: DEFAULT_TEST_OTP,
         deviceInfo: {
           deviceId: 'samsung_s21_001',
           deviceName: 'Samsung Galaxy S21',
           platform: 'android',
         },
-      });
+      }, '/api/v1/auth/verify-otp');
 
       const result = await handler(event);
 
       expect(result.statusCode).toBe(200);
       const body = JSON.parse(result.body);
       expect(body.success).toBe(true);
-      
-      // Device info should be stored in user_sessions table
-      // This is tested indirectly through successful token generation
       expect(body.data.tokens.accessToken).toBeDefined();
     }, 10000);
   });
