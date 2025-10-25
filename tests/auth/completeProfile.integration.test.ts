@@ -3,16 +3,18 @@ import { handler } from '../../src/handlers/auth/completeProfile';
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { db } from '../../src/db/client';
 import { users, organizations, organizationUsers } from '../../src/db/schema/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { generateTokenPair } from '../../src/utils/jwt';
+import { getRedisClient } from '../../src/config/redis';
 
 /**
  * Integration tests for complete-profile endpoint
- * These tests use real database connections
+ * These tests use real database and Redis connections
  * Run with: npm test -- completeProfile.integration.test.ts
  */
 describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
-  const testPhoneNumber = '+919876543299';
+  // Generate unique phone number for each test run to avoid conflicts
+  const testPhoneNumber = `+9198765432${Math.floor(Math.random() * 100).toString().padStart(2, '0')}`;
   let testUserId: string;
   let testOrgId: string;
   let testAccessToken: string;
@@ -20,6 +22,9 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
   let event: APIGatewayProxyEvent;
 
   beforeAll(async () => {
+    // Ensure database connection is ready
+    // The database should be running via Docker
+    
     // Create a test user and organization for testing
     const [user] = await db
       .insert(users)
@@ -35,7 +40,7 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     const [org] = await db
       .insert(organizations)
       .values({
-        name: 'My Business',
+        name: `My Business ${Date.now()}`, // Unique name to avoid conflicts
         phoneNumber: testPhoneNumber,
         setupComplete: false,
         createdByUserId: testUserId,
@@ -73,7 +78,40 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     testAccessToken = tokens.accessToken;
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Reset database state before each test to ensure isolation
+    // This prevents tests from affecting each other
+    const [updatedUser] = await db
+      .update(users)
+      .set({
+        name: 'Test User',
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(users.id, testUserId))
+      .returning();
+
+    const [updatedOrg] = await db
+      .update(organizations)
+      .set({
+        name: `My Business ${Date.now()}`, // Reset with unique name
+        setupComplete: false,
+        address: null,
+        businessType: null,
+        gstin: null,
+        pan: null,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(organizations.id, testOrgId))
+      .returning();
+
+    // Verify the reset was successful
+    if (!updatedUser) {
+      throw new Error(`Failed to reset user ${testUserId} in beforeEach`);
+    }
+    if (!updatedOrg) {
+      throw new Error(`Failed to reset organization ${testOrgId} in beforeEach`);
+    }
+
     // Base event structure
     event = {
       body: null,
@@ -100,12 +138,24 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
   afterAll(async () => {
     // Clean up test data
     try {
-      await db.delete(organizationUsers).where(eq(organizationUsers.userId, testUserId));
-      await db.delete(organizations).where(eq(organizations.id, testOrgId));
-      await db.delete(users).where(eq(users.id, testUserId));
+      if (testUserId && testOrgId) {
+        // Delete organizationUsers by composite key
+        await db.delete(organizationUsers)
+          .where(sql`${organizationUsers.organizationId} = ${testOrgId} AND ${organizationUsers.userId} = ${testUserId}`);
+      }
+      if (testOrgId) {
+        await db.delete(organizations).where(eq(organizations.id, testOrgId));
+      }
+      if (testUserId) {
+        await db.delete(users).where(eq(users.id, testUserId));
+      }
     } catch (error) {
       console.log('Cleanup error (may be normal):', error);
     }
+
+    // Close Redis connection
+    const redis = getRedisClient();
+    await redis.disconnect();
   });
 
   describe('Successful Profile Completion', () => {
@@ -140,12 +190,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     }, 10000);
 
     it('should complete profile with all optional fields', async () => {
-      // Reset organization setupComplete to false for this test
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       event.body = JSON.stringify({
         ownerName: 'Suresh Patel',
         organizationName: 'Suresh Manufacturing',
@@ -229,12 +273,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
 
   describe('Validation Errors', () => {
     it('should reject missing ownerName', async () => {
-      // Reset setupComplete
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       event.body = JSON.stringify({
         organizationName: 'Test Org',
       });
@@ -250,11 +288,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject ownerName too short', async () => {
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       event.body = JSON.stringify({
         ownerName: 'A',
         organizationName: 'Test Org',
@@ -270,11 +303,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject invalid GST number format', async () => {
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       event.body = JSON.stringify({
         ownerName: 'Test User',
         organizationName: 'Test Org',
@@ -291,11 +319,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject invalid PAN number format', async () => {
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       event.body = JSON.stringify({
         ownerName: 'Test User',
         organizationName: 'Test Org',
@@ -312,11 +335,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject invalid industry value', async () => {
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       event.body = JSON.stringify({
         ownerName: 'Test User',
         organizationName: 'Test Org',
@@ -332,11 +350,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject employeeCount out of range', async () => {
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       event.body = JSON.stringify({
         ownerName: 'Test User',
         organizationName: 'Test Org',
@@ -378,12 +391,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject duplicate organization name', async () => {
-      // Reset setupComplete
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       // Create another organization with a specific name
       const [anotherOrg] = await db
         .insert(organizations)
@@ -413,12 +420,6 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should reject if user is not owner', async () => {
-      // Reset setupComplete
-      await db
-        .update(organizations)
-        .set({ setupComplete: false })
-        .where(eq(organizations.id, testOrgId));
-
       // Generate token with non-owner role
       const nonOwnerToken = generateTokenPair({
         userId: testUserId,
@@ -468,10 +469,10 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
     });
 
     it('should allow updating to same organization name', async () => {
-      // Reset setupComplete
+      // Set the org name to 'Current Name' for this specific test
       await db
         .update(organizations)
-        .set({ setupComplete: false, name: 'Current Name' })
+        .set({ name: 'Current Name' })
         .where(eq(organizations.id, testOrgId));
 
       event.body = JSON.stringify({
@@ -504,7 +505,7 @@ describe('PATCH /api/v1/auth/complete-profile - Integration Tests', () => {
       ];
 
       for (const industry of validIndustries) {
-        // Reset setupComplete
+        // Reset setupComplete for each iteration since previous iteration sets it to true
         await db
           .update(organizations)
           .set({ setupComplete: false })
