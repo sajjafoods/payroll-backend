@@ -25,6 +25,7 @@ import {
   updateSessionRefreshToken,
   revokeSession,
   validateUserStatus,
+  revokeAllUserSessions,
 } from '../repositories/auth.repository';
 import { 
   generateTokenPair, 
@@ -485,6 +486,95 @@ export const refreshAccessToken = async (
     throw new AppError(
       ErrorCode.TOKEN_GENERATION_FAILED,
       'Failed to generate new tokens',
+      500
+    );
+  }
+};
+
+/**
+ * Logout user and invalidate tokens
+ */
+export const logoutUser = async (
+  userId: string,
+  refreshToken: string,
+  logoutAllDevices: boolean = false
+): Promise<{ message: string; devicesLoggedOut: number }> => {
+  try {
+    // Validate JWT format
+    if (!refreshToken || typeof refreshToken !== 'string') {
+      throw new AppError(
+        ErrorCode.INVALID_REQUEST,
+        'Refresh token is required',
+        400,
+        { 
+          missingFields: ['refreshToken'],
+          field: 'refreshToken',
+        }
+      );
+    }
+
+    let devicesLoggedOut = 0;
+
+    if (logoutAllDevices) {
+      // Logout from all devices
+      devicesLoggedOut = await revokeAllUserSessions(userId, 'user_logout_all_devices');
+      
+      return {
+        message: 'Successfully logged out from all devices',
+        devicesLoggedOut,
+      };
+    } else {
+      // Logout from current device only
+      // Hash the refresh token to find session
+      const tokenHash = hashRefreshToken(refreshToken);
+      const session = await findSessionByRefreshToken(tokenHash);
+
+      // Check if session exists
+      if (!session) {
+        throw new AppError(
+          ErrorCode.INVALID_REFRESH_TOKEN,
+          'Refresh token is invalid or expired',
+          401,
+          { reason: 'not_found' }
+        );
+      }
+
+      // Check if session already revoked
+      if (!session.isActive || session.revokedAt) {
+        throw new AppError(
+          ErrorCode.TOKEN_REVOKED,
+          'This session has been terminated. Please login again',
+          403,
+          { reason: session.revokedReason || 'session_revoked' }
+        );
+      }
+
+      // Check if session belongs to the user
+      if (session.userId !== userId) {
+        throw new AppError(
+          ErrorCode.UNAUTHORIZED,
+          'Invalid or expired access token',
+          401
+        );
+      }
+
+      // Revoke the session
+      await revokeSession(session.id as string, 'user_logout');
+      devicesLoggedOut = 1;
+
+      return {
+        message: 'Successfully logged out',
+        devicesLoggedOut,
+      };
+    }
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    logger.error('Error in logoutUser service:', error);
+    throw new AppError(
+      ErrorCode.INTERNAL_SERVER_ERROR,
+      'Failed to logout. Please try again',
       500
     );
   }

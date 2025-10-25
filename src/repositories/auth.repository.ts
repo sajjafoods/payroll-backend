@@ -418,3 +418,49 @@ export const validateUserStatus = async (userId: string) => {
     throw error;
   }
 };
+
+/**
+ * Revoke all active sessions for a user (logout from all devices)
+ */
+export const revokeAllUserSessions = async (userId: string, reason: string) => {
+  try {
+    const result = await db
+      .update(userSessions)
+      .set({
+        isActive: false,
+        revokedAt: sql`NOW()`,
+        revokedReason: reason,
+      })
+      .where(and(
+        eq(userSessions.userId, userId),
+        eq(userSessions.isActive, true)
+      ))
+      .returning({ id: userSessions.id });
+
+    return result.length;
+  } catch (error) {
+    logger.error('Error revoking all user sessions:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get active sessions count for a user
+ */
+export const getActiveSessionsCount = async (userId: string) => {
+  try {
+    const result = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(userSessions)
+      .where(and(
+        eq(userSessions.userId, userId),
+        eq(userSessions.isActive, true)
+      ))
+      .limit(1);
+
+    return result[0]?.count || 0;
+  } catch (error) {
+    logger.error('Error getting active sessions count:', error);
+    throw error;
+  }
+};
