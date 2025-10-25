@@ -6,6 +6,7 @@
 import dotenv from 'dotenv';
 import { resolve } from 'path';
 import { db } from '../../client';
+import { closeRedisConnection } from '../../../config/redis';
 
 // Load environment variables from .env.local
 dotenv.config({ path: resolve(process.cwd(), '.env.local') });
@@ -23,6 +24,9 @@ beforeAll(() => {
 
 // Global cleanup - close database connections
 afterAll(async () => {
+  // Close Redis connection to prevent logging after tests
+  await closeRedisConnection();
+  
   // Close database connection pool
   // @ts-ignore - accessing internal client
   if (db.$client) {

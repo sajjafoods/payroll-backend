@@ -31,6 +31,13 @@ functions:
           path: /api/v1/auth/verify-otp
           method: post
 
+  completeProfile:
+    handler: src/handlers/auth/completeProfile.handler
+    events:
+      - httpApi:
+          path: /api/v1/auth/complete-profile
+          method: patch
+
   # Employees
   listEmployees:
     handler: src/handlers/employees/list.handler

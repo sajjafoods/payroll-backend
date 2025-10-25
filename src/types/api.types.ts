@@ -115,6 +115,44 @@ export enum ErrorCode {
   SMS_SERVICE_ERROR = 'SMS_SERVICE_ERROR',
   AUTHENTICATION_ERROR = 'AUTHENTICATION_ERROR',
   INTERNAL_SERVER_ERROR = 'INTERNAL_SERVER_ERROR',
+  
+  // Profile Errors
+  PROFILE_ALREADY_COMPLETE = 'PROFILE_ALREADY_COMPLETE',
+  ORGANIZATION_NAME_EXISTS = 'ORGANIZATION_NAME_EXISTS',
+  UPDATE_FAILED = 'UPDATE_FAILED',
+  UNAUTHORIZED = 'UNAUTHORIZED',
+  VALIDATION_ERROR = 'VALIDATION_ERROR',
+}
+
+// Complete Profile Types
+export interface CompleteProfileRequest {
+  ownerName: string;
+  organizationName: string;
+  organizationAddress?: string;
+  industry?: string;
+  employeeCount?: number;
+  gstNumber?: string;
+  panNumber?: string;
+}
+
+export interface CompleteProfileResponse {
+  user: {
+    id: string;
+    name: string;
+    phoneNumber: string;
+    role: string;
+  };
+  organization: {
+    id: string;
+    name: string;
+    address?: string;
+    industry?: string;
+    employeeCount?: number;
+    gstNumber?: string;
+    setupComplete: boolean;
+    updatedAt: string;
+  };
+  message: string;
 }
 
 // Custom Error Class

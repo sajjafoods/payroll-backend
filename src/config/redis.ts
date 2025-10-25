@@ -37,8 +37,9 @@ export const getRedisClient = (): Redis => {
 
 export const closeRedisConnection = async (): Promise<void> => {
   if (redisClient) {
+    // Remove all event listeners to prevent logging after tests are done
+    redisClient.removeAllListeners();
     await redisClient.quit();
     redisClient = null;
-    logger.info('Redis connection closed');
   }
 };
