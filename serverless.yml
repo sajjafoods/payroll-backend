@@ -38,6 +38,13 @@ functions:
           path: /api/v1/auth/complete-profile
           method: patch
 
+  refreshToken:
+    handler: src/handlers/auth/refreshToken.handler
+    events:
+      - httpApi:
+          path: /api/v1/auth/refresh
+          method: post
+
   # Employees
   listEmployees:
     handler: src/handlers/employees/list.handler

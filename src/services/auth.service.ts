@@ -7,7 +7,7 @@ import {
   checkIpRateLimit,
   maskPhoneNumber,
 } from '../utils/otp';
-import { AppError, ErrorCode, SendOtpResponse } from '../types/api.types';
+import { AppError, ErrorCode, SendOtpResponse, TokenInfo } from '../types/api.types';
 import { logger } from '../utils/logger';
 import { 
   findUserByPhoneNumber,
@@ -21,11 +21,18 @@ import {
   lockUserAccount,
   isUserAccountLocked,
   getDefaultOwnerPermissions,
+  findSessionByRefreshToken,
+  updateSessionRefreshToken,
+  revokeSession,
+  validateUserStatus,
 } from '../repositories/auth.repository';
 import { 
   generateTokenPair, 
   hashRefreshToken, 
-  calculateTokenExpiry 
+  calculateTokenExpiry,
+  verifyRefreshToken,
+  TokenExpiredError,
+  TokenInvalidError,
 } from '../utils/jwt';
 import { randomUUID } from 'crypto';
 
@@ -288,6 +295,196 @@ export const verifyOtpAndAuthenticate = async (
     throw new AppError(
       ErrorCode.AUTHENTICATION_ERROR,
       'Failed to authenticate. Please try again',
+      500
+    );
+  }
+};
+
+/**
+ * Refresh access token using refresh token
+ */
+export const refreshAccessToken = async (
+  refreshToken: string
+): Promise<TokenInfo> => {
+  try {
+    // Validate JWT format
+    if (!refreshToken || typeof refreshToken !== 'string') {
+      throw new AppError(
+        ErrorCode.INVALID_TOKEN_FORMAT,
+        'Refresh token is required and must be valid JWT format',
+        400,
+        { field: 'refreshToken' }
+      );
+    }
+
+    // Verify refresh token signature and decode
+    let decoded;
+    try {
+      decoded = verifyRefreshToken(refreshToken);
+    } catch (error) {
+      if (error instanceof TokenExpiredError) {
+        const expiredAt = new Date().toISOString();
+        throw new AppError(
+          ErrorCode.INVALID_REFRESH_TOKEN,
+          'Refresh token is invalid or expired',
+          401,
+          { 
+            reason: 'expired',
+            expiredAt,
+          }
+        );
+      } else if (error instanceof TokenInvalidError) {
+        throw new AppError(
+          ErrorCode.INVALID_TOKEN_FORMAT,
+          'Refresh token is required and must be valid JWT format',
+          400,
+          { field: 'refreshToken' }
+        );
+      }
+      throw error;
+    }
+
+    // Hash the refresh token to find session
+    const tokenHash = hashRefreshToken(refreshToken);
+    const session = await findSessionByRefreshToken(tokenHash);
+
+    // Check if session exists
+    if (!session) {
+      throw new AppError(
+        ErrorCode.INVALID_REFRESH_TOKEN,
+        'Refresh token is invalid or expired',
+        401,
+        { reason: 'not_found' }
+      );
+    }
+
+    // Check if session is revoked
+    if (!session.isActive || session.revokedAt) {
+      throw new AppError(
+        ErrorCode.TOKEN_REVOKED,
+        'This session has been terminated. Please login again',
+        403,
+        { reason: session.revokedReason || 'session_revoked' }
+      );
+    }
+
+    // Check if session is expired
+    const expiresAt = new Date(session.expiresAt);
+    if (expiresAt <= new Date()) {
+      // Revoke expired session
+      await revokeSession(session.id as string, 'token_expired');
+      
+      throw new AppError(
+        ErrorCode.INVALID_REFRESH_TOKEN,
+        'Refresh token is invalid or expired',
+        401,
+        { 
+          reason: 'expired',
+          expiredAt: session.expiresAt,
+        }
+      );
+    }
+
+    // Validate user status
+    const userStatus = await validateUserStatus(session.userId as string);
+    if (!userStatus.valid) {
+      // Revoke session due to user status issue
+      await revokeSession(session.id as string, userStatus.reason as string);
+
+      if (userStatus.reason === 'user_deactivated') {
+        throw new AppError(
+          ErrorCode.TOKEN_REVOKED,
+          'This session has been terminated. Please login again',
+          403,
+          { reason: 'user_account_deactivated' }
+        );
+      }
+
+      if (userStatus.reason === 'account_locked') {
+        throw new AppError(
+          ErrorCode.TOKEN_REVOKED,
+          'This session has been terminated. Please login again',
+          403,
+          { 
+            reason: 'account_locked',
+            lockedUntil: userStatus.lockedUntil,
+          }
+        );
+      }
+
+      throw new AppError(
+        ErrorCode.TOKEN_REVOKED,
+        'This session has been terminated. Please login again',
+        403,
+        { reason: userStatus.reason }
+      );
+    }
+
+    // Get user with organization details
+    const userWithOrg = await getUserWithOrganization(session.userId as string);
+    
+    if (!userWithOrg) {
+      await revokeSession(session.id as string, 'user_not_found');
+      throw new AppError(
+        ErrorCode.TOKEN_REVOKED,
+        'This session has been terminated. Please login again',
+        403,
+        { reason: 'user_not_found' }
+      );
+    }
+
+    // Check if user still has organization access
+    if (!userWithOrg.orgId) {
+      await revokeSession(session.id as string, 'no_organization_access');
+      throw new AppError(
+        ErrorCode.TOKEN_REVOKED,
+        'This session has been terminated. Please login again',
+        403,
+        { reason: 'user_removed_from_organization' }
+      );
+    }
+
+    // Generate new token pair with rotation (for security)
+    const newTokens = generateTokenPair({
+      userId: session.userId as string,
+      organizationId: userWithOrg.orgId as string,
+      role: userWithOrg.role as string,
+      sessionId: decoded.sessionId,
+    });
+
+    // Update session with new refresh token hash
+    const newTokenHash = hashRefreshToken(newTokens.refreshToken);
+    const newExpiresAt = calculateTokenExpiry('7d');
+    
+    try {
+      await updateSessionRefreshToken(
+        session.id as string,
+        newTokenHash,
+        newExpiresAt
+      );
+    } catch (error) {
+      logger.error('Failed to update session refresh token:', error);
+      throw new AppError(
+        ErrorCode.TOKEN_GENERATION_FAILED,
+        'Failed to generate new tokens',
+        500
+      );
+    }
+
+    return {
+      accessToken: newTokens.accessToken,
+      refreshToken: newTokens.refreshToken,
+      expiresIn: newTokens.expiresIn,
+      tokenType: newTokens.tokenType,
+    };
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    logger.error('Error in refreshAccessToken service:', error);
+    throw new AppError(
+      ErrorCode.TOKEN_GENERATION_FAILED,
+      'Failed to generate new tokens',
       500
     );
   }

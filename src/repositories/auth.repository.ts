@@ -304,3 +304,117 @@ export const getDefaultOwnerPermissions = () => {
     reports: ['read', 'export'],
   };
 };
+
+/**
+ * Find active session by refresh token hash
+ */
+export const findSessionByRefreshToken = async (refreshTokenHash: string) => {
+  try {
+    const result = await db
+      .select({
+        id: userSessions.id,
+        userId: userSessions.userId,
+        isActive: userSessions.isActive,
+        expiresAt: userSessions.expiresAt,
+        revokedAt: userSessions.revokedAt,
+        revokedReason: userSessions.revokedReason,
+      })
+      .from(userSessions)
+      .where(eq(userSessions.refreshTokenHash, refreshTokenHash))
+      .limit(1);
+
+    return result[0] || null;
+  } catch (error) {
+    logger.error('Error finding session by refresh token:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update session with new refresh token
+ */
+export const updateSessionRefreshToken = async (
+  sessionId: string,
+  newRefreshTokenHash: string,
+  expiresAt: Date
+) => {
+  try {
+    const [updated] = await db
+      .update(userSessions)
+      .set({
+        refreshTokenHash: newRefreshTokenHash,
+        expiresAt: expiresAt.toISOString(),
+        lastActivityAt: sql`NOW()`,
+      })
+      .where(eq(userSessions.id, sessionId))
+      .returning();
+
+    return updated;
+  } catch (error) {
+    logger.error('Error updating session refresh token:', error);
+    throw error;
+  }
+};
+
+/**
+ * Revoke user session
+ */
+export const revokeSession = async (sessionId: string, reason: string) => {
+  try {
+    await db
+      .update(userSessions)
+      .set({
+        isActive: false,
+        revokedAt: sql`NOW()`,
+        revokedReason: reason,
+      })
+      .where(eq(userSessions.id, sessionId));
+  } catch (error) {
+    logger.error('Error revoking session:', error);
+    throw error;
+  }
+};
+
+/**
+ * Check if user is still active and not locked
+ */
+export const validateUserStatus = async (userId: string) => {
+  try {
+    const result = await db
+      .select({
+        isActive: users.isActive,
+        isLocked: users.isLocked,
+        lockedUntil: users.lockedUntil,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const user = result[0];
+    if (!user) {
+      return { valid: false, reason: 'user_not_found' };
+    }
+
+    if (!user.isActive) {
+      return { valid: false, reason: 'user_deactivated' };
+    }
+
+    if (user.isLocked) {
+      const lockedUntil = new Date(user.lockedUntil as string);
+      const now = new Date();
+      
+      if (lockedUntil > now) {
+        return { 
+          valid: false, 
+          reason: 'account_locked',
+          lockedUntil: lockedUntil.toISOString(),
+        };
+      }
+    }
+
+    return { valid: true };
+  } catch (error) {
+    logger.error('Error validating user status:', error);
+    throw error;
+  }
+};
