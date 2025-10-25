@@ -85,7 +85,7 @@ export const sendOtp = async (
     } catch (error) {
       logger.error('Failed to send OTP SMS:', error);
       throw new AppError(
-        ErrorCode.SMS_SERVICE_ERROR,
+        ErrorCode.OTP_DELIVERY_FAILED,
         'Failed to send OTP. Please try again',
         500
       );
@@ -294,8 +294,8 @@ export const verifyOtpAndAuthenticate = async (
     }
     logger.error('Error in verifyOtpAndAuthenticate service:', error);
     throw new AppError(
-      ErrorCode.AUTHENTICATION_ERROR,
-      'Failed to authenticate. Please try again',
+      ErrorCode.INTERNAL_SERVER_ERROR,
+      'An unexpected error occurred',
       500
     );
   }
@@ -466,8 +466,8 @@ export const refreshAccessToken = async (
     } catch (error) {
       logger.error('Failed to update session refresh token:', error);
       throw new AppError(
-        ErrorCode.TOKEN_GENERATION_FAILED,
-        'Failed to generate new tokens',
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'An unexpected error occurred',
         500
       );
     }
@@ -484,8 +484,8 @@ export const refreshAccessToken = async (
     }
     logger.error('Error in refreshAccessToken service:', error);
     throw new AppError(
-      ErrorCode.TOKEN_GENERATION_FAILED,
-      'Failed to generate new tokens',
+      ErrorCode.INTERNAL_SERVER_ERROR,
+      'An unexpected error occurred',
       500
     );
   }

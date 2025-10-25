@@ -1,10 +1,11 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { sendOtpRequestSchema, finalPhoneNumberSchema } from '../../middleware/validation.middleware';
+import { sendOtpRequestSchema, finalPhoneNumberSchema, extractClientIp } from '../../middleware/validation.middleware';
 import { handleError, successResponse } from '../../middleware/error.middleware';
 import { sendOtp } from '../../services/auth.service';
 import { logger } from '../../utils/logger';
-import { extractClientIp } from '../../middleware/validation.middleware';
-import { AppError, ErrorCode, SendOtpRequest } from '../../types/api.types';
+import { parseRequestBody } from '../../utils/request';
+import { normalizePhoneNumber } from '../../utils/phone';
+import { SendOtpRequest } from '../../types/api.types';
 
 /**
  * Handler for POST /api/v1/auth/send-otp
@@ -19,26 +20,12 @@ export const handler = async (
       method: event.httpMethod,
     });
 
-    // Parse request body
-    let body: SendOtpRequest;
-    try {
-      body = JSON.parse(event.body || '{}');
-    } catch (error) {
-      throw new AppError(
-        ErrorCode.INVALID_PHONE_NUMBER,
-        'Invalid request body',
-        400
-      );
-    }
-
-    // Validate request
+    // Parse and validate request body
+    const body = parseRequestBody<SendOtpRequest>(event);
     const validatedData = sendOtpRequestSchema.parse(body);
     
-    // Apply country code if not included in phone number
-    let phoneNumber = validatedData.phoneNumber;
-    if (!phoneNumber.startsWith('+')) {
-      phoneNumber = `${validatedData.countryCode}${phoneNumber}`;
-    }
+    // Normalize phone number with country code
+    const phoneNumber = normalizePhoneNumber(validatedData.phoneNumber, validatedData.countryCode);
 
     // Validate final phone number format
     finalPhoneNumberSchema.parse(phoneNumber);

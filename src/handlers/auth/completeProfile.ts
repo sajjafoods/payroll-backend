@@ -2,98 +2,16 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { handleError, successResponse } from '../../middleware/error.middleware';
 import { logger } from '../../utils/logger';
 import { AppError, ErrorCode, CompleteProfileRequest, CompleteProfileResponse } from '../../types/api.types';
-import { z } from 'zod';
-import { verifyAccessToken } from '../../utils/jwt';
+import { extractAndVerifyToken } from '../../middleware/auth.middleware';
+import { completeProfileSchema } from '../../middleware/validation.middleware';
+import { parseRequestBody } from '../../utils/request';
 import { db } from '../../db/client';
-import { users, organizations, organizationUsers } from '../../db/schema/schema';
-import { eq, and, sql } from 'drizzle-orm';
+import { users, organizations } from '../../db/schema/schema';
+import { eq, sql } from 'drizzle-orm';
 import { 
   getOrganizationById, 
-  updateOrganization, 
   organizationNameExists 
 } from '../../db/queries/organizations';
-
-// Industry enum values
-const industryEnum = [
-  'retail',
-  'manufacturing',
-  'services',
-  'hospitality',
-  'construction',
-  'healthcare',
-  'education',
-  'transportation',
-  'agriculture',
-  'other',
-] as const;
-
-// Validation schema for complete profile request
-const completeProfileSchema = z.object({
-  ownerName: z.string()
-    .min(2, 'Owner name must be at least 2 characters')
-    .max(100, 'Owner name must not exceed 100 characters'),
-  organizationName: z.string()
-    .min(2, 'Organization name must be at least 2 characters')
-    .max(100, 'Organization name must not exceed 100 characters'),
-  organizationAddress: z.string()
-    .max(500, 'Organization address must not exceed 500 characters')
-    .optional(),
-  industry: z.enum(industryEnum).optional(),
-  employeeCount: z.number()
-    .int('Employee count must be a whole number')
-    .min(1, 'Employee count must be at least 1')
-    .max(10000, 'Employee count must not exceed 10000')
-    .optional(),
-  gstNumber: z.string()
-    .regex(
-      /^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$/,
-      'Invalid GST number format'
-    )
-    .optional(),
-  panNumber: z.string()
-    .regex(
-      /^[A-Z]{5}\d{4}[A-Z]{1}$/,
-      'Invalid PAN number format'
-    )
-    .optional(),
-});
-
-/**
- * Extract and verify JWT token from Authorization header
- */
-const extractAndVerifyToken = (event: APIGatewayProxyEvent) => {
-  const authHeader = event.headers.Authorization || event.headers.authorization;
-  
-  if (!authHeader) {
-    throw new AppError(
-      ErrorCode.UNAUTHORIZED,
-      'Missing Authorization header',
-      401
-    );
-  }
-
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    throw new AppError(
-      ErrorCode.UNAUTHORIZED,
-      'Invalid Authorization header format',
-      401
-    );
-  }
-
-  const token = parts[1];
-  
-  try {
-    const decoded = verifyAccessToken(token);
-    return decoded;
-  } catch (error) {
-    throw new AppError(
-      ErrorCode.UNAUTHORIZED,
-      'Invalid or expired access token',
-      401
-    );
-  }
-};
 
 /**
  * Handler for PATCH /api/v1/auth/complete-profile
@@ -125,19 +43,8 @@ export const handler = async (
       );
     }
 
-    // Parse request body
-    let body: CompleteProfileRequest;
-    try {
-      body = JSON.parse(event.body || '{}');
-    } catch (error) {
-      throw new AppError(
-        ErrorCode.INVALID_REQUEST,
-        'Invalid request body',
-        400
-      );
-    }
-
-    // Validate request
+    // Parse and validate request body
+    const body = parseRequestBody<CompleteProfileRequest>(event);
     const validationResult = completeProfileSchema.safeParse(body);
     if (!validationResult.success) {
       const fieldErrors: Record<string, string> = {};
@@ -168,7 +75,7 @@ export const handler = async (
     
     if (!organization) {
       throw new AppError(
-        ErrorCode.UPDATE_FAILED,
+        ErrorCode.ORGANIZATION_NOT_FOUND,
         'Organization not found',
         404
       );

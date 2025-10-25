@@ -2,31 +2,10 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { handleError, successResponse } from '../../middleware/error.middleware';
 import { verifyOtpAndAuthenticate } from '../../services/auth.service';
 import { logger } from '../../utils/logger';
-import { extractClientIp, phoneNumberSchema } from '../../middleware/validation.middleware';
+import { extractClientIp, verifyOtpRequestSchema } from '../../middleware/validation.middleware';
 import { AppError, ErrorCode, VerifyOtpRequest } from '../../types/api.types';
-import { z } from 'zod';
-
-// Validation schema for verify OTP request with device info
-const verifyOtpRequestSchema = z.object({
-  phoneNumber: phoneNumberSchema,
-  otp: z.string().length(6, 'OTP must be 6 digits').regex(/^\d{6}$/, 'OTP must contain only digits'),
-  deviceInfo: z.object({
-    deviceId: z.string().optional(),
-    deviceName: z.string().optional(),
-    platform: z.enum(['web', 'android', 'ios']).optional(),
-  }).optional(),
-});
-
-/**
- * Normalize phone number to include country code
- */
-const normalizePhoneNumber = (phoneNumber: string): string => {
-  // If phone number doesn't start with +91, add it
-  if (!phoneNumber.startsWith('+91')) {
-    return `+91${phoneNumber}`;
-  }
-  return phoneNumber;
-};
+import { parseRequestBody } from '../../utils/request';
+import { normalizePhoneNumber } from '../../utils/phone';
 
 /**
  * Handler for POST /api/v1/auth/verify-otp
@@ -41,19 +20,9 @@ export const handler = async (
       method: event.httpMethod,
     });
 
-    // Parse request body
-    let body: VerifyOtpRequest;
-    try {
-      body = JSON.parse(event.body || '{}');
-    } catch (error) {
-      throw new AppError(
-        ErrorCode.INVALID_REQUEST,
-        'Invalid request body',
-        400
-      );
-    }
-
-    // Validate request
+    // Parse and validate request body
+    const body = parseRequestBody<VerifyOtpRequest>(event);
+    
     const validationResult = verifyOtpRequestSchema.safeParse(body);
     if (!validationResult.success) {
       // Get unique field names that failed validation

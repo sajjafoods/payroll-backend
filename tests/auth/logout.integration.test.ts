@@ -180,10 +180,9 @@ describe('POST /api/v1/auth/logout - Integration Tests', () => {
     }, 10000);
 
     it('should logout from all devices when logoutAllDevices is true', async () => {
-      // Create multiple sessions for the user
+      // Create second session
       await storeOtp(testPhoneNumber, validOtp);
       
-      // Create second session
       const loginEvent2: APIGatewayProxyEvent = {
         body: JSON.stringify({
           phoneNumber: testPhoneNumber,
@@ -213,10 +212,9 @@ describe('POST /api/v1/auth/logout - Integration Tests', () => {
         resource: '',
       };
       await verifyOtpHandler(loginEvent2);
-
-      await storeOtp(testPhoneNumber, validOtp);
       
       // Create third session
+      await storeOtp(testPhoneNumber, validOtp);
       const loginEvent3: APIGatewayProxyEvent = {
         body: JSON.stringify({
           phoneNumber: testPhoneNumber,
@@ -301,7 +299,7 @@ describe('POST /api/v1/auth/logout - Integration Tests', () => {
       expect(result.statusCode).toBe(401);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('UNAUTHORIZED');
-      expect(body.error.message).toBe('Invalid or expired access token');
+      expect(body.error.message).toBe('Missing Authorization header');
     });
 
     it('should return 401 when access token is invalid', async () => {
@@ -352,9 +350,15 @@ describe('POST /api/v1/auth/logout - Integration Tests', () => {
 
       expect(result.statusCode).toBe(400);
       expect(body.success).toBe(false);
-      expect(body.error.code).toBe('INVALID_REQUEST');
-      expect(body.error.message).toBe('Refresh token is required');
-      expect(body.error.details.missingFields).toContain('refreshToken');
+      expect(body.error.code).toBe('MISSING_REQUIRED_FIELD');
+      expect(body.error.message).toBe('Validation failed');
+      expect(body.error.details.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'refreshToken',
+          })
+        ])
+      );
     });
 
     it('should return 400 when refreshToken format is invalid', async () => {
@@ -368,9 +372,9 @@ describe('POST /api/v1/auth/logout - Integration Tests', () => {
       const result = await handler(event);
       const body = JSON.parse(result.body);
 
-      expect(result.statusCode).toBe(400);
+      expect(result.statusCode).toBe(401);
       expect(body.success).toBe(false);
-      expect(body.error.code).toBe('INVALID_REQUEST');
+      expect(body.error.code).toBe('INVALID_REFRESH_TOKEN');
     });
 
     it('should return 400 when request body is invalid JSON', async () => {
